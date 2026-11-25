@@ -22,3 +22,18 @@ export function toggleOption(answer: string | null | undefined, option: string, 
   const next = [...cur.filter((x) => !isExclusive(x)), option];
   return options.filter((o) => next.includes(o)).join(ANSWER_SEP);
 }
+
+/**
+ * 从回答里找出对应的目标：多选答案先拆成一个个选项，再和进行中的目标名称比对。
+ * 选中了好几个目标时，取最具体的一级（任务 > 短期 > 长期），同级取先选的。
+ */
+export function goalFromAnswers<G extends { id: string; title: string; status: string; level: string }>(answers: (string | null | undefined)[], goals: G[]): G | null {
+  const rank: Record<string, number> = { task: 0, short: 1, long: 2 };
+  const picked: G[] = [];
+  for (const a of answers)
+    for (const part of (a ?? "").split(ANSWER_SEP)) {
+      const g = goals.find((x) => x.status === "active" && x.title === part.trim());
+      if (g && !picked.includes(g)) picked.push(g);
+    }
+  return picked.sort((x, y) => (rank[x.level] ?? 3) - (rank[y.level] ?? 3))[0] ?? null;
+}

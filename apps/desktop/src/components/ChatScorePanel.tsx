@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { dominantKind, durationMinutes, type ScoreDims } from "../../../../modules/scoring/index.ts";
 import { AllocationEditor, type AllocDraft } from "./AllocationEditor.tsx";
-import { selectedOptions, toggleOption } from "../answers.ts";
+import { goalFromAnswers, selectedOptions, toggleOption } from "../answers.ts";
 import { api, type Entry, type Meta, type Question } from "../api.ts";
 import { FeedbackPanel, type FeedbackPayload } from "./FeedbackPanel.tsx";
 import { ScoreCard } from "./ScoreCard.tsx";
@@ -92,7 +92,7 @@ export function ChatScorePanel(props: {
   async function submitGuide(skipAll = false) {
     if (!entry || !guide) return;
     const list = skipAll ? [] : guide.map((q) => ({ id: q.id, answer: (answers[q.id] ?? "").trim() })).filter((a) => a.answer);
-    const goalHit = props.meta.goals.find((g) => g.status === "active" && list.some((a) => a.answer === g.title));
+    const goalHit = goalFromAnswers(list.map((a) => a.answer), props.meta.goals);
     // 还没有分配：用回答换算出分配，给用户看一眼再确认
     if (entry.allocations.length === 0) {
       if (skipAll) {

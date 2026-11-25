@@ -6,7 +6,7 @@ import { ScoreCard } from "./ScoreCard.tsx";
 import { VoiceButton } from "./VoiceButton.tsx";
 import { ActivitySuggestions } from "./ActivitySuggestions.tsx";
 import { DeviceRef, deviceTopItems } from "./DeviceRef.tsx";
-import { selectedOptions, toggleOption } from "../answers.ts";
+import { goalFromAnswers, selectedOptions, toggleOption } from "../answers.ts";
 import { FeedbackPanel, type FeedbackPayload } from "./FeedbackPanel.tsx";
 import { STATUS_LABEL } from "./Timeline.tsx";
 import { tr } from "../i18n.ts";
@@ -102,7 +102,8 @@ export function RecordPanel(props: {
     }
     setAnswers(ans);
     setFreeText(free);
-    setGoalId(e.goal_id);
+    // 还没关联目标、但回答里选过目标的（例如“对应哪个目标”这类问题）：直接关联上
+    setGoalId(e.goal_id ?? goalFromAnswers(Object.values(ans), meta.goals)?.id ?? null);
   }
 
   /** 操作完成后：用服务器返回的记录刷新表单，再通知外面刷新列表 */
@@ -197,7 +198,13 @@ export function RecordPanel(props: {
   /** 选择问题的答案；按电脑记录起草的问题会把这块时间直接写进分配 */
   function pickAnswer(q: Question, option: string) {
     const value = toggleOption(answers[q.id] === FREE ? "" : answers[q.id], option, q.options);
-    setAnswers({ ...answers, [q.id]: value });
+    const next = { ...answers, [q.id]: value };
+    setAnswers(next);
+    // 回答里选到了目标：没手动选过目标时自动关联（评分才会给出这个目标的进度建议）
+    if (!goalId) {
+      const g = goalFromAnswers(Object.values(next), meta.goals);
+      if (g) setGoalId(g.id);
+    }
     if (q.meta?.kind !== "device") return;
     // 多选时把这块时间平均分给选中的几类（同一类合并），之后还能在分配里微调
     const chosen = (selectedOptions(value, q.options) ?? [])
