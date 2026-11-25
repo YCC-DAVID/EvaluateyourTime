@@ -1,6 +1,12 @@
 import { useState } from "react";
 import { api, type Meta } from "../api.ts";
 
+const PROVIDER_LABEL = {
+  api: "Claude API（API key，按用量计费）",
+  "claude-cli": "本机 Claude Code（使用你的订阅）",
+  "codex-cli": "本机 Codex（使用你的订阅）",
+} as const;
+
 export function SettingsView({ meta, onChanged }: { meta: Meta; onChanged: () => void }) {
   const [hours, setHours] = useState(String(meta.work_budget_minutes / 60));
   const [msg, setMsg] = useState<string | null>(null);
@@ -52,24 +58,37 @@ export function SettingsView({ meta, onChanged }: { meta: Meta; onChanged: () =>
         <table className="kv">
           <tbody>
             <tr>
+              <td>后端</td>
+              <td>{PROVIDER_LABEL[meta.ai.provider]}</td>
+            </tr>
+            <tr>
               <td>模型</td>
               <td>{meta.ai.model}</td>
             </tr>
-            <tr>
-              <td>地址</td>
-              <td>{meta.ai.base_url}</td>
-            </tr>
-            <tr>
-              <td>API key</td>
-              <td>{meta.ai.key_configured ? "已配置（只保存在本机 .env）" : "未在 .env 中配置"}</td>
-            </tr>
+            {meta.ai.provider === "api" ? (
+              <>
+                <tr>
+                  <td>地址</td>
+                  <td>{meta.ai.base_url}</td>
+                </tr>
+                <tr>
+                  <td>API key</td>
+                  <td>{meta.ai.key_configured ? "已配置（只保存在本机 .env）" : "未在 .env 中配置"}</td>
+                </tr>
+              </>
+            ) : (
+              <tr>
+                <td>凭据</td>
+                <td>使用本机 CLI 自己的登录（不读取 .env 里的 API key）；工具全部关闭，在空的临时目录中运行</td>
+              </tr>
+            )}
             <tr>
               <td>语音转写</td>
               <td>{meta.asr.server ? "使用 .env 中配置的转写服务" : "使用浏览器自带语音识别"}</td>
             </tr>
           </tbody>
         </table>
-        <p className="muted small">修改项目根目录的 .env 后重启服务生效。AI 只收到当前这段记录、分类、目标和当天更早记录的标题。</p>
+        <p className="muted small">在项目根目录的 .env 中用 AI_PROVIDER 切换（api / claude-cli / codex-cli），重启服务生效。AI 只收到当前这段记录、分类、目标和当天更早记录的标题。</p>
       </div>
 
       <div className="card">

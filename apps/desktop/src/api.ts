@@ -21,7 +21,7 @@ export interface Meta {
   goals: Goal[];
   work_budget_minutes: number;
   rules: RuleSet;
-  ai: { model: string; base_url: string; key_configured: boolean };
+  ai: { provider: "api" | "claude-cli" | "codex-cli"; model: string; base_url: string; key_configured: boolean };
   asr: { server: boolean };
 }
 

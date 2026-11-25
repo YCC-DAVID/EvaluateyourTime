@@ -77,7 +77,7 @@ api.get("/meta", (_req, res) => {
     goals: goals(),
     work_budget_minutes: workBudget(),
     rules: RULES_V1,
-    ai: { model: cfg.model, base_url: cfg.baseURL, key_configured: !!cfg.apiKey },
+    ai: { provider: cfg.provider, model: cfg.model, base_url: cfg.baseURL, key_configured: !!cfg.apiKey },
     asr: { server: !!process.env.ASR_BASE_URL },
   });
 });

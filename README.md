@@ -12,11 +12,21 @@
 
 ```bash
 npm install
-cp .env.example .env   # 填写 ANTHROPIC_API_KEY
+cp .env.example .env   # 选择 AI 后端，见下文
 npm run dev            # 打开 http://127.0.0.1:5180
 ```
 
-不填 API key 也能用：记录、手动分配时间、手动评分、热力图和统计都可以离线完成。
+AI 后端三选一（`.env` 中的 `AI_PROVIDER`）：
+
+| 后端 | 需要 | 费用 |
+|---|---|---|
+| `claude-cli` | 本机装好并登录 Claude Code（`claude`） | 占用你的 Claude 订阅额度 |
+| `codex-cli` | 本机装好并登录 Codex（`codex login`） | 占用你的 ChatGPT 订阅额度 |
+| `api` | `ANTHROPIC_API_KEY` | 按 API 用量计费 |
+
+不设置时：填了 API key 就用 `api`，否则用 `claude-cli`。CLI 后端只在本机运行，App 不读取、不保存 CLI 的登录凭据；每次调用都关闭全部工具（Claude Code 用 `--tools ""`，Codex 用只读沙箱），在新建的空临时目录中运行，用完删除。
+
+完全不用 AI 也能用：记录、手动分配时间、手动评分、热力图和统计都可以离线完成。
 
 ## 一条记录的流程
 
@@ -36,7 +46,7 @@ apps/desktop/
   server/         本地服务：API、SQLite、导入导出、语音转写转发
 modules/
   scoring/        时间、分配、评分、热力图、统计的纯函数（含测试）
-  ai/             提示词、结构化输出契约、Claude 调用
+  ai/             提示词、结构化输出契约、AI 后端（API / Claude Code / Codex）
 data/             本地数据库（不进 git）
 ```
 
@@ -44,8 +54,11 @@ data/             本地数据库（不进 git）
 
 | 变量 | 说明 |
 |---|---|
-| `ANTHROPIC_API_KEY` | Claude API key，只保存在本机 |
-| `AI_MODEL` | 默认 `claude-opus-5-5` |
+| `AI_PROVIDER` | `api` / `claude-cli` / `codex-cli` |
+| `ANTHROPIC_API_KEY` | Claude API key，只保存在本机；CLI 后端不会把它传给子进程 |
+| `AI_MODEL` | API 后端的模型，默认 `claude-opus-5-5` |
+| `CLAUDE_CLI_MODEL` / `CODEX_MODEL` | 可选，CLI 后端的模型；留空用 CLI 默认 |
+| `CLAUDE_CLI_PATH` / `CODEX_CLI_PATH` | 可选，命令不在 PATH 里时填完整路径 |
 | `AI_BASE_URL` | 可选，自定义 API 地址；留空为官方地址 |
 | `AI_FALLBACKS` | 默认开启服务端备用模型（模型拒答时自动换备用模型）；设为 `off` 关闭 |
 | `ASR_BASE_URL` / `ASR_API_KEY` / `ASR_MODEL` | 可选，OpenAI 兼容的语音转写接口；不填时用浏览器自带语音识别 |
