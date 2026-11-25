@@ -304,6 +304,29 @@ export function computeDayStats(
   };
 }
 
+// ---------- 记录时间窗口 ----------
+
+/** 补录只允许最近 3 天：今天、昨天、前天（按当地日期）。 */
+export const BACKFILL_DAYS = 3;
+/** 允许结束时间比“现在”晚一点，容忍设备间时钟偏差。 */
+export const FUTURE_TOLERANCE_MS = 5 * 60000;
+
+/** 可补录的最早时刻：(BACKFILL_DAYS - 1) 天前的当地 0 点。 */
+export function backfillWindowStart(nowMs: number, days = BACKFILL_DAYS): number {
+  const d = new Date(nowMs);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - (days - 1)).getTime();
+}
+
+/** 检查时间段是否在允许范围内；返回错误信息，合法时返回 null。 */
+export function checkRecordWindow(startMs: number, endMs: number, nowMs: number): string | null {
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return "时间格式无效";
+  if (endMs <= startMs) return "结束时间必须晚于开始时间";
+  if (endMs - startMs > 24 * 3600_000) return "单段记录不能超过 24 小时";
+  if (endMs > nowMs + FUTURE_TOLERANCE_MS) return "不能记录未来的时间";
+  if (startMs < backfillWindowStart(nowMs)) return `只能补录最近 ${BACKFILL_DAYS} 天（今天、昨天、前天）`;
+  return null;
+}
+
 /** 当地日期 YYYY-MM-DD 对应的 [0 点, 次日 0 点) 的 epoch 毫秒（按运行环境时区）。 */
 export function localDayRange(dateStr: string): [number, number] {
   const [y, m, d] = dateStr.split("-").map(Number);

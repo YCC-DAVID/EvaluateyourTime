@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, todayStr, type Entry, type Meta } from "./api.ts";
-import { localDayRange, buildHeatmap, computeDayStats, type DayEntry } from "../../../modules/scoring/index.ts";
-import { Heatmap } from "./components/Heatmap.tsx";
+import { api, todayStr, toDayEntry, type Entry, type Meta } from "./api.ts";
+import { backfillWindowStart, localDayRange, buildHeatmap, computeDayStats, type DayEntry } from "../../../modules/scoring/index.ts";
+import { Heatmap, ModeSwitch, type HeatMode } from "./components/Heatmap.tsx";
+import { PeriodHeatmap } from "./components/PeriodHeatmap.tsx";
 import { DayStatsCard } from "./components/DayStatsCard.tsx";
 import { Timeline } from "./components/Timeline.tsx";
 import { RecordPanel, type RecordTarget } from "./components/RecordPanel.tsx";
 import { GoalsView } from "./components/GoalsView.tsx";
 import { SettingsView } from "./components/SettingsView.tsx";
+import { ChatView } from "./components/ChatView.tsx";
 
-type Tab = "today" | "goals" | "settings";
+type Tab = "today" | "chat" | "goals" | "settings";
 
 export function App() {
   const [tab, setTab] = useState<Tab>("today");
@@ -18,6 +20,7 @@ export function App() {
   const [target, setTarget] = useState<RecordTarget>({ kind: "new" });
   const [loadError, setLoadError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
+  const [heatMode, setHeatMode] = useState<HeatMode>("day");
 
   const [d0, d1] = useMemo(() => localDayRange(day), [day]);
 
@@ -44,17 +47,7 @@ export function App() {
   const primaryGoal = meta?.goals.find((g) => g.is_primary && g.status === "active") ?? null;
 
   const dayEntries: DayEntry[] = useMemo(
-    () =>
-      entries.map((e) => ({
-        id: e.id,
-        start: e.start_utc,
-        end: e.end_utc,
-        overall: e.status === "confirmed" ? (e.score?.overall ?? null) : null,
-        confirmed: e.status === "confirmed",
-        goal_id: e.goal_id,
-        allocations: e.allocations,
-        title: e.title ?? e.raw_text.slice(0, 20),
-      })),
+    () => entries.map(toDayEntry),
     [entries],
   );
   const cells = useMemo(() => buildHeatmap(dayEntries, d0, d1), [dayEntries, d0, d1]);
@@ -68,6 +61,7 @@ export function App() {
 
   const onEntryChanged = (e: Entry | null) => {
     reloadEntries();
+    reloadMeta(); // 目标进度可能随评分确认而变化
     if (e) {
       setDay(todayStr(new Date(e.start_utc)));
       setTarget({ kind: "edit", id: e.id });
@@ -80,6 +74,11 @@ export function App() {
     setDay(todayStr(new Date(y, m - 1, d + n)));
     setTarget({ kind: "new" });
   };
+  const shiftPeriod = (dir: -1 | 1) => {
+    const [y, m, d] = day.split("-").map(Number);
+    setDay(todayStr(heatMode === "week" ? new Date(y, m - 1, d + 7 * dir) : new Date(y, m - 1 + dir, 1)));
+  };
+  const modeSwitch = <ModeSwitch mode={heatMode} onChange={setHeatMode} />;
 
   const selected = target.kind === "edit" ? (entries.find((e) => e.id === target.id) ?? null) : null;
 
@@ -91,11 +90,23 @@ export function App() {
           {(
             [
               ["today", "今天"],
+              ["chat", "对话"],
               ["goals", "目标"],
               ["settings", "设置"],
             ] as const
           ).map(([k, label]) => (
-            <button key={k} className={tab === k ? "tab active" : "tab"} onClick={() => setTab(k)}>
+            <button
+              key={k}
+              className={tab === k ? "tab active" : "tab"}
+              onClick={() => {
+                // 对话页右侧固定看今天
+                if (k === "chat") {
+                  setDay(todayStr());
+                  setHeatMode("day");
+                }
+                setTab(k);
+              }}
+            >
               {label}
             </button>
           ))}
@@ -118,14 +129,38 @@ export function App() {
                 </button>
               )}
             </div>
+            {heatMode === "day" ? (
             <Heatmap
+              modeSwitch={modeSwitch}
               cells={cells}
               entries={entries}
               rules={meta.rules}
               selectedId={selected?.id ?? null}
               onPick={(id) => setTarget({ kind: "edit", id })}
               onPickEmpty={(start, end) => setTarget({ kind: "new", start, end })}
+              backfillFrom={backfillWindowStart(now)}
+              now={now}
+              picked={target.kind === "new" && target.start && target.end ? { start: target.start.getTime(), end: target.end.getTime() } : null}
             />
+            ) : (
+              <PeriodHeatmap
+                mode={heatMode}
+                anchor={day}
+                rules={meta.rules}
+                categories={meta.categories}
+                workBudgetMinutes={meta.work_budget_minutes}
+                primaryGoalId={primaryGoal?.id ?? null}
+                now={now}
+                refreshKey={entries}
+                modeSwitch={modeSwitch}
+                onShift={shiftPeriod}
+                onPickDay={(d) => {
+                  setDay(d);
+                  setHeatMode("day");
+                  setTarget({ kind: "new" });
+                }}
+              />
+            )}
             {stats && <DayStatsCard stats={stats} meta={meta} primaryGoal={primaryGoal} />}
             <Timeline
               entries={entries}
@@ -134,6 +169,9 @@ export function App() {
               selectedId={selected?.id ?? null}
               onPick={(id) => setTarget({ kind: "edit", id })}
               onFillGap={(start, end) => setTarget({ kind: "new", start, end })}
+              onDraftGap={(start, end) => setTarget({ kind: "new", start, end, fromDevice: true })}
+              backfillFrom={backfillWindowStart(now)}
+              categories={meta.categories}
             />
           </section>
           <section className="col right">
@@ -149,7 +187,53 @@ export function App() {
         </main>
       )}
 
-      {tab === "goals" && meta && <GoalsView meta={meta} onChanged={reloadMeta} />}
+      {tab === "chat" && meta && (
+        <ChatView
+          meta={meta}
+          onDataChanged={() => {
+            reloadEntries();
+            reloadMeta();
+          }}
+          onOpenEntry={(id) => {
+            setTarget({ kind: "edit", id });
+            setTab("today");
+          }}
+          side={
+            <>
+              <Heatmap
+                cells={cells}
+                entries={entries}
+                rules={meta.rules}
+                selectedId={null}
+                onPick={(id) => {
+                  setTarget({ kind: "edit", id });
+                  setTab("today");
+                }}
+                onPickEmpty={(start, end) => {
+                  setTarget({ kind: "new", start, end });
+                  setTab("today");
+                }}
+                backfillFrom={backfillWindowStart(now)}
+                now={now}
+              />
+              {stats && <DayStatsCard stats={stats} meta={meta} primaryGoal={primaryGoal} />}
+            </>
+          }
+        />
+      )}
+
+      {tab === "goals" && meta && (
+        <GoalsView
+          meta={meta}
+          onChanged={reloadMeta}
+          onOpenEntry={(e) => {
+            // 从目标详情跳到这条记录所在的那一天
+            setDay(todayStr(new Date(e.start_utc)));
+            setTarget({ kind: "edit", id: e.id });
+            setTab("today");
+          }}
+        />
+      )}
       {tab === "settings" && meta && <SettingsView meta={meta} onChanged={() => { reloadMeta(); reloadEntries(); }} />}
     </div>
   );

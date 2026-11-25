@@ -2,8 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   BUILTIN_CATEGORIES,
+  backfillWindowStart,
   buildHeatmap,
   checkAllocations,
+  checkRecordWindow,
   computeDayStats,
   computeOverall,
   durationMinutes,
@@ -78,6 +80,16 @@ test("跨天记录按比例分摊并标记", () => {
   const s = computeDayStats([e], BUILTIN_CATEGORIES, day0, day1, day1, 360, null);
   assert.equal(s.effectiveWorkMinutes, 60);
   assert.equal(s.prorated, true);
+});
+
+test("补录窗口：今天、昨天、前天可以，更早和未来不行", () => {
+  const now = new Date(2026, 10, 24, 10, 0).getTime();
+  const at = (d: number, h: number) => new Date(2026, 10, d, h, 0).getTime();
+  assert.equal(checkRecordWindow(at(22, 0), at(22, 1), now), null); // 前天 0 点
+  assert.match(checkRecordWindow(at(21, 23), at(22, 1), now)!, /最近 3 天/);
+  assert.match(checkRecordWindow(at(24, 9), at(24, 11), now)!, /未来/);
+  assert.equal(checkRecordWindow(at(24, 9), now + 60000, now), null); // 容忍 1 分钟时钟偏差
+  assert.equal(backfillWindowStart(now), at(22, 0));
 });
 
 test("热力图：96 格，覆盖格用整段平均分，未记录为 null", () => {

@@ -7,7 +7,13 @@
     "dev": "tsx watch --ignore 'apps/desktop/src/**' --ignore 'data/**' apps/desktop/server/index.ts",
     "start": "tsx apps/desktop/server/index.ts",
     "test": "node --import tsx --test modules/**/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "vite build",
+    "autostart:install": "node scripts/autostart.mjs install",
+    "autostart:status": "node scripts/autostart.mjs status",
+    "autostart:start": "node scripts/autostart.mjs start",
+    "autostart:stop": "node scripts/autostart.mjs stop",
+    "autostart:uninstall": "node scripts/autostart.mjs uninstall"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.14.0",

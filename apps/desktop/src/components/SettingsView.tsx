@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { api, type Meta } from "../api.ts";
+import { DeviceSettings } from "./DeviceSettings.tsx";
+import { ProfileSettings } from "./ProfileSettings.tsx";
 
 const PROVIDER_LABEL = {
   api: "Claude API（API key，按用量计费）",
@@ -40,6 +42,8 @@ export function SettingsView({ meta, onChanged }: { meta: Meta; onChanged: () =>
   return (
     <main className="page">
       <h2>设置</h2>
+
+      <ProfileSettings meta={meta} onChanged={onChanged} />
 
       <div className="card">
         <h3>每日有效脑力工作预算</h3>
@@ -88,8 +92,10 @@ export function SettingsView({ meta, onChanged }: { meta: Meta; onChanged: () =>
             </tr>
           </tbody>
         </table>
-        <p className="muted small">在项目根目录的 .env 中用 AI_PROVIDER 切换（api / claude-cli / codex-cli），重启服务生效。AI 只收到当前这段记录、分类、目标和当天更早记录的标题。</p>
+        <p className="muted small">在项目根目录的 .env 中用 AI_PROVIDER 切换（api / claude-cli / codex-cli），重启服务生效。AI 收到的内容：当前这段记录、分类、进行中的目标、相关记录的标题；开启下面的“发给 AI”时，还有这段时间的电脑应用名和时长。</p>
       </div>
+
+      <DeviceSettings categories={meta.categories} />
 
       <div className="card">
         <h3>数据</h3>

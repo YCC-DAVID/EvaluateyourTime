@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { GRADE_LABEL, computeOverall, gradeOf, type CategoryKind, type RuleSet, type ScoreDims } from "../../../../modules/scoring/index.ts";
-import type { ScoreRevision } from "../api.ts";
+import type { ReactNode } from "react";
+import type { Goal, ScoreRevision } from "../api.ts";
+import { ProgressSlider } from "./ProgressSlider.tsx";
+import { LEVEL_COLOR } from "./ActivitySuggestions.tsx";
 
 const DIMS: { key: keyof ScoreDims; label: string; hint: string }[] = [
   { key: "execution_quality", label: "执行质量", hint: "是否投入；是否得到相应的推进、锻炼或恢复" },
@@ -25,7 +28,11 @@ export function ScoreCard(props: {
   rules: RuleSet;
   confirmed: boolean;
   busy: boolean;
-  onConfirm: (p: { dims?: ScoreDims; change_kind?: string; change_note?: string }) => void;
+  /** 这条记录关联的目标 */
+  goal: Goal | null;
+  /** 不确定项的补充、自我反馈（放在理由下面） */
+  feedback?: ReactNode;
+  onConfirm: (p: { dims?: ScoreDims; change_kind?: string; change_note?: string; goal_progress?: number | null; goal_progress_reason?: string }) => void;
 }) {
   const base: ScoreDims = props.score
     ? {
@@ -38,6 +45,18 @@ export function ScoreCard(props: {
   const [changeKind, setChangeKind] = useState("only_this");
   const [changeNote, setChangeNote] = useState("");
   const [showHistory, setShowHistory] = useState(false);
+  // 目标进度：AI 建议的值默认勾选，可以改数或取消
+  const suggested = props.score?.goal_progress ?? null;
+  // 只在“还没确认、且 AI 建议高于当前进度”时默认勾选。
+  // 已确认的旧记录、或目标之后又推进过（建议值已经落后），默认不动，避免把进度拉回去。
+  const current = props.goal?.progress ?? 0;
+  const suggestAhead = suggested != null && suggested > current;
+  const [applyProgress, setApplyProgress] = useState(!props.confirmed && suggestAhead);
+  const [progressValue, setProgressValue] = useState(!props.confirmed && suggestAhead ? suggested! : current);
+  const progressPending = !!props.goal && applyProgress && progressValue !== props.goal.progress;
+  // 推进了什么：默认用 AI 的理由，改了数值或没有 AI 理由时必须自己写
+  const [progressNote, setProgressNote] = useState(props.score?.goal_progress_reason ?? "");
+  const progressNoteMissing = progressPending && !progressNote.trim();
 
   const changed = DIMS.some((d) => dims[d.key] !== base[d.key]);
   const overall = computeOverall(dims, props.kind, props.rules);
@@ -63,13 +82,7 @@ export function ScoreCard(props: {
       </div>
 
       {props.score?.reason && <p className="reason">{props.score.reason}</p>}
-      {props.score && props.score.uncertainties.length > 0 && (
-        <ul className="uncertain">
-          {props.score.uncertainties.map((u, i) => (
-            <li key={i}>不确定：{u}</li>
-          ))}
-        </ul>
-      )}
+      {props.feedback}
       {props.score?.suggestion && <p className="suggestion">建议：{props.score.suggestion}</p>}
 
       <div className="dims">
@@ -109,20 +122,60 @@ export function ScoreCard(props: {
         </div>
       )}
 
+      {props.goal && (
+        <div className="goal-progress">
+          <label className="check">
+            <input type="checkbox" checked={applyProgress} onChange={(e) => setApplyProgress(e.target.checked)} />
+            更新目标进度
+          </label>
+          <span className="gp-title">{props.goal.title}</span>
+          <span className="gp-from">原 {props.goal.progress}%</span>
+          <ProgressSlider
+            value={progressValue}
+            base={props.goal.progress}
+            color={LEVEL_COLOR[props.goal.level]}
+            disabled={!applyProgress}
+            onChange={setProgressValue}
+          />
+          {suggested == null && props.score && <div className="gp-reason muted small">AI 没有判断出这段让目标有推进，可以手动调整。</div>}
+          {suggested != null && !suggestAhead && (
+            <div className="gp-reason muted small">AI 当时建议 {suggested}%，不高于当前进度，默认不更新。</div>
+          )}
+          {applyProgress && (
+            <label className="gp-note">
+              <span className="small">这次推进了什么{progressPending ? "（必填）" : ""}</span>
+              <input
+                type="text"
+                value={progressNote}
+                placeholder="例如：跑完了模块 B 的消融，结果整理成表"
+                onChange={(e) => setProgressNote(e.target.value)}
+              />
+              {props.score?.goal_progress_reason && progressNote === props.score.goal_progress_reason && (
+                <span className="muted small">已填入 AI 的理由，可以修改</span>
+              )}
+            </label>
+          )}
+          {progressValue >= 100 && applyProgress && <div className="gp-reason small ok-text">到 100% 了，可以去目标页把它标为完成。</div>}
+        </div>
+      )}
+
       <div className="actions">
-        {props.confirmed && !changed ? (
+        {props.confirmed && !changed && !progressPending ? (
           <span className="ok-text">已确认</span>
         ) : (
           <button
             className="primary"
-            disabled={props.busy}
+            disabled={props.busy || progressNoteMissing}
+            title={progressNoteMissing ? "先写明这次推进了什么" : undefined}
             onClick={() =>
-              props.onConfirm(
-                changed || !props.score ? { dims, change_kind: props.score ? changeKind : undefined, change_note: changeNote || undefined } : {},
-              )
+              props.onConfirm({
+                ...(changed || !props.score ? { dims, change_kind: props.score ? changeKind : undefined, change_note: changeNote || undefined } : {}),
+                goal_progress: progressPending ? progressValue : null,
+                goal_progress_reason: progressPending ? progressNote.trim() : undefined,
+              })
             }
           >
-            {changed ? "保存修改并确认" : "确认评分"}
+            {changed ? "保存修改并确认" : props.confirmed ? "更新目标进度" : "确认评分"}
           </button>
         )}
         {props.history.length > 1 && (

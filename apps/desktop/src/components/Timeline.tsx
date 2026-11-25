@@ -1,5 +1,7 @@
-import { GRADE_LABEL, gradeOf } from "../../../../modules/scoring/index.ts";
+import type { CSSProperties } from "react";
+import { GRADE_LABEL, dominantKind, gradeOf, type Category } from "../../../../modules/scoring/index.ts";
 import { fmtMinutes, hm, type Entry, type EntryStatus } from "../api.ts";
+import { GapDevice } from "./GapDevice.tsx";
 
 export const STATUS_LABEL: Record<EntryStatus, string> = {
   draft: "草稿",
@@ -16,7 +18,18 @@ export function Timeline(props: {
   selectedId: string | null;
   onPick: (id: string) => void;
   onFillGap: (start: Date, end: Date) => void;
+  /** 按电脑记录补录这个空档 */
+  onDraftGap: (start: Date, end: Date) => void;
+  /** 可补录的最早时刻（最近 3 天） */
+  backfillFrom: number;
+  categories: Category[];
 }) {
+  // 时间轴左侧色条：按这段时长最多的类型上色；还没有分配时用灰色
+  const colorOf = (e: Entry) => {
+    if (e.allocations.length === 0) return "var(--none)";
+    const kind = dominantKind(e.allocations, props.categories);
+    return props.categories.find((c) => c.kind === kind)?.color ?? "var(--none)";
+  };
   type Item = { kind: "entry"; e: Entry } | { kind: "gap"; s: number; t: number };
   const items: Item[] = [];
   let cursor = props.dayStart;
@@ -43,14 +56,26 @@ export function Timeline(props: {
                 {hm(it.s)}–{hm(it.t)}
               </span>
               <span className="muted">未记录 {fmtMinutes(Math.round((it.t - it.s) / 60000))}</span>
-              <button className="link" onClick={() => props.onFillGap(new Date(it.s), new Date(it.t))}>
-                补录
-              </button>
+              {it.t <= props.backfillFrom ? (
+                <span className="muted small">超过 3 天，不能补录</span>
+              ) : (
+                <>
+                  <button className="link" onClick={() => props.onFillGap(new Date(Math.max(it.s, props.backfillFrom)), new Date(it.t))}>
+                    补录
+                  </button>
+                  <GapDevice
+                    start={Math.max(it.s, props.backfillFrom)}
+                    end={it.t}
+                    onDraft={() => props.onDraftGap(new Date(Math.max(it.s, props.backfillFrom)), new Date(it.t))}
+                  />
+                </>
+              )}
             </li>
           ) : (
             <li
               key={it.e.id}
               className={`tl-entry${props.selectedId === it.e.id ? " selected" : ""}`}
+              style={{ "--c": colorOf(it.e) } as CSSProperties}
               onClick={() => props.onPick(it.e.id)}
             >
               <span className="tl-time">

@@ -1,9 +1,17 @@
 import { useState } from "react";
-import { api, type Goal, type Meta } from "../api.ts";
+import { api, fmtMinutes, type Goal, type Meta } from "../api.ts";
+import { ProgressSlider } from "./ProgressSlider.tsx";
+import { LEVEL_COLOR } from "./ActivitySuggestions.tsx";
+import { GoalDetail, type GoalEntry } from "./GoalDetail.tsx";
+import { GoalSplitPanel } from "./GoalSplitPanel.tsx";
 
 const LEVEL_LABEL = { long: "长期（2–3 个月）", short: "短期（1–2 周）", task: "具体任务" } as const;
 const STATUS_LABEL = { active: "进行中", paused: "暂停", done: "完成", dropped: "放弃" } as const;
 const PRIORITY_LABEL = { 1: "高", 2: "中", 3: "低" } as const;
+// 进度记录只显示“推进了什么”；来自评分的标一下来源
+const SOURCE_TAG = { ai: "评分·AI", user: "评分", manual: null, rollup: "子目标" } as const;
+// 加子目标时默认低一层
+const CHILD_LEVEL = { long: "short", short: "task", task: "task" } as const;
 
 const empty: Partial<Goal> = { level: "short", title: "", description: "", ddl: "", progress: 0, priority: 2, status: "active", is_primary: false, parent_id: null };
 
@@ -16,15 +24,50 @@ function daysLeft(ddl: string | null) {
   return Math.round((t - today) / 86400_000);
 }
 
-export function GoalsView({ meta, onChanged }: { meta: Meta; onChanged: () => void }) {
+export function GoalsView({ meta, onChanged, onOpenEntry }: { meta: Meta; onChanged: () => void; onOpenEntry: (e: GoalEntry) => void }) {
+  // 展开查看关联记录和完成曲线的目标
+  const [expanded, setExpanded] = useState<string | null>(null);
+  // 正在拆分的目标
+  const [splitting, setSplitting] = useState<string | null>(null);
   const [editing, setEditing] = useState<Partial<Goal> | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 卡片上正在拖动的进度（松手后保存）
+  const [dragging, setDragging] = useState<Record<string, number>>({});
+  // 拖完之后等待填写“推进了什么”的目标
+  const [pending, setPending] = useState<{ id: string; note: string; error?: string } | null>(null);
+  const cancelPending = (id: string) => {
+    setPending(null);
+    setDragging(({ [id]: _drop, ...rest }) => rest);
+  };
+  async function saveProgress(g: Goal) {
+    if (!pending) return;
+    const note = pending.note.trim();
+    if (!note) return setPending({ ...pending, error: "写一句这次推进了什么" });
+    try {
+      await api.updateGoal(g.id, { progress: dragging[g.id], progress_reason: note } as Partial<Goal>);
+      setPending(null);
+      setDragging(({ [g.id]: _done, ...rest }) => rest);
+      onChanged();
+    } catch (e) {
+      setPending({ ...pending, error: (e as Error).message });
+    }
+  }
+
+  /** 打开编辑表单并滚动到它（表单在页面顶部，从下面的卡片点进来时看不到） */
+  function openForm(g: Partial<Goal>) {
+    setEditing(g);
+    requestAnimationFrame(() => document.querySelector(".goal-form")?.scrollIntoView({ behavior: "smooth", block: "center" }));
+  }
 
   async function save() {
     if (!editing) return;
     setError(null);
     try {
-      if (editing.id) await api.updateGoal(editing.id, editing);
+      if (editing.id) {
+        // 编辑表单不改进度（进度在卡片上改并写明原因），所以不提交进度字段
+        const { progress: _p, invested_minutes: _i, progress_events: _e, ...rest } = editing;
+        await api.updateGoal(editing.id, rest);
+      }
       else await api.createGoal(editing);
       setEditing(null);
       onChanged();
@@ -95,10 +138,40 @@ export function GoalsView({ meta, onChanged }: { meta: Meta; onChanged: () => vo
                 ))}
               </select>
             </label>
-            <label>
-              进度 {editing.progress ?? 0}%
-              <input type="range" min={0} max={100} step={5} value={editing.progress ?? 0} onChange={(e) => setEditing({ ...editing, progress: Number(e.target.value) })} />
-            </label>
+            {editing.parent_id && (() => {
+              const used = meta.goals
+                .filter((x) => x.parent_id === editing.parent_id && x.id !== editing.id)
+                .reduce((s, x) => s + (x.weight ?? 0), 0);
+              const w = editing.weight ?? null;
+              return (
+                <label>
+                  占父目标的比例（%）
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={5}
+                    placeholder={`留空则取剩余的 ${Math.max(0, 100 - used)}`}
+                    value={w ?? ""}
+                    onChange={(e) => setEditing({ ...editing, weight: e.target.value === "" ? null : Number(e.target.value) })}
+                  />
+                  <span className={`small${used + (w ?? Math.max(0, 100 - used)) > 100 ? " error-text" : ""}`}>
+                    其他子目标已占 {used}%{used + (w ?? 0) > 100 ? "，合计超过 100%" : ""}。这个子目标进度 +10% 时，父目标 +{((w ?? Math.max(0, 100 - used)) / 10).toFixed(1)}%
+                  </span>
+                </label>
+              );
+            })()}
+            {editing.id ? (
+              <label>
+                进度 {editing.progress ?? 0}%
+                <span className="small">在目标卡片上拖动修改，并写明推进了什么</span>
+              </label>
+            ) : (
+              <label>
+                起始进度 {editing.progress ?? 0}%
+                <input type="range" min={0} max={100} step={5} value={editing.progress ?? 0} onChange={(e) => setEditing({ ...editing, progress: Number(e.target.value) })} />
+              </label>
+            )}
             <label className="wide">
               说明
               <textarea rows={2} value={editing.description ?? ""} onChange={(e) => setEditing({ ...editing, description: e.target.value })} />
@@ -128,7 +201,7 @@ export function GoalsView({ meta, onChanged }: { meta: Meta; onChanged: () => vo
               {list.map((g) => {
                 const dl = daysLeft(g.ddl);
                 return (
-                  <div key={g.id} className={`card goal${g.status !== "active" ? " inactive" : ""}`}>
+                  <div key={g.id} className={`card goal lvl-${g.level}${g.status !== "active" ? " inactive" : ""}`}>
                     <div className="goal-top">
                       <button
                         className={`star${g.is_primary ? " on" : ""}`}
@@ -137,7 +210,15 @@ export function GoalsView({ meta, onChanged }: { meta: Meta; onChanged: () => vo
                       >
                         ★
                       </button>
-                      <strong>{g.title}</strong>
+                      <button
+                        className="goal-title"
+                        aria-expanded={expanded === g.id}
+                        title="查看关联的记录和完成曲线"
+                        onClick={() => setExpanded(expanded === g.id ? null : g.id)}
+                      >
+                        <strong>{g.title}</strong>
+                        <span className="caret">{expanded === g.id ? "▾" : "▸"}</span>
+                      </button>
                       <span className="badge">{STATUS_LABEL[g.status]}</span>
                       <span className="badge">优先级 {PRIORITY_LABEL[g.priority as 1 | 2 | 3]}</span>
                       {dl != null && (
@@ -147,17 +228,147 @@ export function GoalsView({ meta, onChanged }: { meta: Meta; onChanged: () => vo
                       )}
                     </div>
                     {g.description && <p className="muted">{g.description}</p>}
-                    <div className="bar">
-                      <div className="bar-fill" style={{ width: `${g.progress}%` }} />
-                    </div>
+                    {g.parent_id && (
+                      <div className="parent-link small muted">
+                        ↳ 属于「{meta.goals.find((p) => p.id === g.parent_id)?.title ?? "已删除的目标"}」
+                        {g.weight ? ` · 占 ${g.weight}%，进度会按比例计入` : " · 未设占比，不计入父目标"}
+                      </div>
+                    )}
+                    {(() => {
+                      const kids = meta.goals.filter((k) => k.parent_id === g.id);
+                      const sumW = kids.reduce((s, k) => s + (k.weight ?? 0), 0);
+                      const fromKids = Math.round(kids.reduce((s, k) => s + (k.progress * (k.weight ?? 0)) / 100, 0));
+                      return (
+                        <div className="children">
+                          {kids.length > 0 && (
+                            <>
+                              <div className="children-head small">
+                                <span>子目标（占比合计 {sumW}%{sumW > 100 ? "，超过 100%" : ""}）</span>
+                                <span className="muted">按子目标算：{fromKids}%</span>
+                              </div>
+                              <ul>
+                                {kids.map((k) => (
+                                  <li key={k.id} className={k.status !== "active" ? "inactive" : ""}>
+                                    <span className={`lvl-dot lvl-${k.level}`} />
+                                    <span className="child-title">{k.title}</span>
+                                    <span className="mini-bar">
+                                      <span style={{ width: `${k.progress}%`, background: LEVEL_COLOR[k.level] }} />
+                                    </span>
+                                    <span className="small">{k.progress}%</span>
+                                    <span className="muted small">占 {k.weight ?? 0}% → 贡献 {Math.round((k.progress * (k.weight ?? 0)) / 10) / 10}%</span>
+                                    <button className="link small" onClick={() => openForm({ ...k })}>
+                                      编辑
+                                    </button>
+                                  </li>
+                                ))}
+                              </ul>
+                            </>
+                          )}
+                          <div className="actions">
+                            <button
+                              className="link small"
+                              onClick={() => openForm({ ...empty, parent_id: g.id, level: CHILD_LEVEL[g.level], ddl: g.ddl, weight: null })}
+                            >
+                              + 添加子目标
+                            </button>
+                            {g.level !== "task" && g.status === "active" && 100 - sumW > 0 && splitting !== g.id && (
+                              <button className="link small" onClick={() => setSplitting(g.id)}>
+                                拆分成子目标
+                              </button>
+                            )}
+                          </div>
+                          {splitting === g.id && (
+                            <GoalSplitPanel
+                              goal={g}
+                              remaining={Math.max(0, 100 - sumW)}
+                              onCancel={() => setSplitting(null)}
+                              onDone={() => {
+                                setSplitting(null);
+                                onChanged();
+                              }}
+                            />
+                          )}
+                          <div className="actions">
+                            {kids.some((k) => k.weight) && fromKids !== g.progress && (
+                              <button
+                                className="link small"
+                                title="把父目标进度设为 Σ 子目标进度 × 占比"
+                                onClick={async () => {
+                                  await api.rollupGoal(g.id);
+                                  onChanged();
+                                }}
+                              >
+                                按子目标汇总为 {fromKids}%
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                    {expanded !== g.id && g.progress_events && g.progress_events.some((ev) => ev.reason?.trim()) && (
+                      <ul className="progress-events">
+                        {g.progress_events.filter((ev) => ev.reason?.trim()).slice(0, 3).map((ev, i) => (
+                          <li key={i}>
+                            <span className="pe-delta">
+                              {ev.from_progress}% → {ev.to_progress}%
+                            </span>
+                            <span className="pe-reason">{ev.reason}</span>
+                            <span className="muted pe-meta">
+                              {SOURCE_TAG[ev.source] && <span className="tag">{SOURCE_TAG[ev.source]}</span>}
+                              {new Date(ev.created_at).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <ProgressSlider
+                      value={dragging[g.id] ?? g.progress}
+                      base={g.progress}
+                      color={LEVEL_COLOR[g.level]}
+                      disabled={g.status !== "active" || (!!pending && pending.id !== g.id)}
+                      onChange={(v) => setDragging({ ...dragging, [g.id]: v })}
+                      onCommit={(v) => {
+                        // 松手后不直接保存：先问这次推进了什么
+                        if (v === g.progress) return cancelPending(g.id);
+                        if (pending?.id !== g.id) setPending({ id: g.id, note: "" });
+                      }}
+                    />
+                    {pending?.id === g.id && dragging[g.id] !== undefined && (
+                      <div className="progress-note">
+                        <div className="small">
+                          {g.progress}% → {dragging[g.id]}%：这次推进了什么？
+                        </div>
+                        <input
+                          type="text"
+                          autoFocus
+                          placeholder={dragging[g.id] > g.progress ? "例如：跑完了模块 B 的消融，结果整理成表" : "例如：发现之前的结果有 bug，需要重跑"}
+                          value={pending.note}
+                          onChange={(e) => setPending({ ...pending, note: e.target.value, error: undefined })}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") saveProgress(g);
+                            if (e.key === "Escape") cancelPending(g.id);
+                          }}
+                        />
+                        {pending.error && <div className="error-text small">{pending.error}</div>}
+                        <div className="actions">
+                          <button className="primary" disabled={!pending.note.trim()} onClick={() => saveProgress(g)}>
+                            保存进度
+                          </button>
+                          <button onClick={() => cancelPending(g.id)}>取消</button>
+                        </div>
+                      </div>
+                    )}
                     <div className="actions">
-                      <span className="muted small">进度 {g.progress}%</span>
+                      <span className="muted small">已投入 {fmtMinutes(g.invested_minutes ?? 0)}</span>
+                      <button className="link" onClick={() => setExpanded(expanded === g.id ? null : g.id)}>
+                        {expanded === g.id ? "收起" : "记录与曲线"}
+                      </button>
                       <span className="spacer" />
-                      <button className="link" onClick={() => setEditing({ ...g })}>
+                      <button className="link" onClick={() => openForm({ ...g })}>
                         编辑
                       </button>
                       {g.status === "active" && (
-                        <button className="link" onClick={() => quick(g, { status: "done", progress: 100, is_primary: false })}>
+                        <button className="link" onClick={() => quick(g, { status: "done", progress: 100, is_primary: false, progress_reason: "标记为完成" } as Partial<Goal>)}>
                           完成
                         </button>
                       )}
@@ -172,6 +383,7 @@ export function GoalsView({ meta, onChanged }: { meta: Meta; onChanged: () => vo
                         删除
                       </button>
                     </div>
+                    {expanded === g.id && <GoalDetail goal={g} color={LEVEL_COLOR[g.level]} onOpenEntry={onOpenEntry} />}
                   </div>
                 );
               })}

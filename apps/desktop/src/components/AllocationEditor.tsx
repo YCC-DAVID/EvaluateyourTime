@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { minutesToPercent, percentToMinutes, type Category } from "../../../../modules/scoring/index.ts";
 import { fmtMinutes } from "../api.ts";
 
@@ -6,6 +7,38 @@ export interface AllocDraft {
   minutes: number;
   note: string | null;
   state: "estimated" | "confirmed";
+  /** 由某个问题的回答生成的行（换答案时替换掉） */
+  qid?: string;
+}
+
+/**
+ * 数字输入框：编辑时保留你敲的原文，不被换算结果改写（否则输入 5% 会立刻变成按整分钟反算的 5.2%）；
+ * 每次输入都把解析出的值交出去，离开输入框后再显示规范值。
+ */
+function DraftNumberInput(props: { value: number; onValue: (v: number) => void; step: number; min: number; max: number; ariaLabel: string }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  return (
+    <input
+      type="number"
+      inputMode="decimal"
+      aria-label={props.ariaLabel}
+      min={props.min}
+      max={props.max}
+      step={props.step}
+      value={draft ?? String(props.value)}
+      onFocus={(e) => {
+        setDraft(String(props.value));
+        e.target.select();
+      }}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        const n = Number(e.target.value);
+        if (e.target.value !== "" && Number.isFinite(n)) props.onValue(Math.max(props.min, Math.min(props.max, n)));
+        else if (e.target.value === "") props.onValue(0);
+      }}
+      onBlur={() => setDraft(null)}
+    />
+  );
 }
 
 export function AllocationEditor(props: {
@@ -45,21 +78,21 @@ export function AllocationEditor(props: {
                 ))}
               </select>
             </span>
-            <input
-              type="number"
+            <DraftNumberInput
+              ariaLabel="分钟"
               min={0}
               max={total}
               step={5}
               value={a.minutes}
-              onChange={(e) => set(i, { minutes: Math.max(0, Math.round(Number(e.target.value) || 0)) })}
+              onValue={(v) => set(i, { minutes: Math.round(v) })}
             />
-            <input
-              type="number"
+            <DraftNumberInput
+              ariaLabel="百分比"
               min={0}
               max={100}
-              step={5}
+              step={1}
               value={minutesToPercent(a.minutes, total)}
-              onChange={(e) => set(i, { minutes: percentToMinutes(Math.max(0, Number(e.target.value) || 0), total) })}
+              onValue={(v) => set(i, { minutes: percentToMinutes(v, total) })}
             />
             <input
               type="text"
@@ -80,6 +113,17 @@ export function AllocationEditor(props: {
         <button className="link" onClick={() => props.onChange([...value, { category_id: nextCat, minutes: Math.max(0, remaining), note: null, state: "confirmed" }])}>
           + 添加分类
         </button>
+        {remaining < 0 && sum > 0 && (
+          <button
+            className="link small"
+            title="时段改短后，把各项按原来的比例缩到新时长内"
+            onClick={() =>
+              props.onChange(value.map((x) => ({ ...x, minutes: Math.floor((x.minutes * total) / sum) })).filter((x) => x.minutes > 0))
+            }
+          >
+            按比例缩到 {fmtMinutes(total)}
+          </button>
+        )}
         <span className={remaining < 0 ? "error-text" : "muted"}>
           {remaining < 0
             ? `超出时段 ${fmtMinutes(-remaining)}，请减少`

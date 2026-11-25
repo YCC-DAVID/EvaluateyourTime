@@ -3,10 +3,14 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import os from "node:os";
 import path from "node:path";
 import { BUILTIN_CATEGORIES, RULES_V1 } from "../../../modules/scoring/index.ts";
 
-const DATA_DIR = process.env.DATA_DIR ?? path.resolve("data");
+// 装了开机自启后，数据统一放在“应用支持”目录（后台登录项读写不了桌面文件夹）；
+// 终端里 npm run dev 也自动用这一份，避免出现两份数据
+export const SHARED_DATA_DIR = path.join(os.homedir(), "Library", "Application Support", "time-evaluate-agent", "data");
+export const DATA_DIR = process.env.DATA_DIR ?? (existsSync(path.join(SHARED_DATA_DIR, "app.db")) ? SHARED_DATA_DIR : path.resolve("data"));
 mkdirSync(DATA_DIR, { recursive: true });
 
 export const db = new DatabaseSync(path.join(DATA_DIR, "app.db"));
@@ -78,6 +82,42 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS rulesets (
   id TEXT PRIMARY KEY, version TEXT NOT NULL UNIQUE, config_json TEXT NOT NULL, effective_from TEXT NOT NULL, note TEXT);
 `);
+
+// ---------- 迁移：给已有数据库补字段和表 ----------
+function addColumn(table: string, column: string, type: string) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+}
+// AI 给出的目标进度建议（评分时一起给）
+addColumn("score_revisions", "goal_progress", "INTEGER");
+addColumn("score_revisions", "goal_progress_reason", "TEXT");
+// 用户对这段的自我反馈、希望以后改进的地方
+addColumn("entries", "reflection", "TEXT");
+addColumn("entries", "improvement", "TEXT");
+// 子目标占父目标的比例（%），以及汇总进度时还没凑满 1% 的零头
+addColumn("goals", "weight", "INTEGER");
+addColumn("goals", "rollup_carry", "REAL NOT NULL DEFAULT 0");
+
+// 对话：每条消息，以及 AI 提出的操作（待用户应用）
+db.exec(`
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id TEXT PRIMARY KEY, role TEXT NOT NULL, content TEXT NOT NULL, actions_json TEXT,
+  model TEXT, created_at TEXT NOT NULL, deleted INTEGER NOT NULL DEFAULT 0);
+`);
+addColumn("chat_messages", "quick_json", "TEXT");
+// 引导问题的附加信息：例如按电脑记录起草时，“这块时间多少分钟、每个选项对应哪个分类”
+addColumn("review_questions", "meta_json", "TEXT");
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS goal_progress_events (
+  id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, entry_id TEXT,
+  from_progress INTEGER NOT NULL, to_progress INTEGER NOT NULL,
+  source TEXT NOT NULL,            -- ai（确认 AI 建议）| user（确认时改过 AI 建议）| manual（目标页手动改）
+  reason TEXT, ${SYNC_COLS});
+CREATE INDEX IF NOT EXISTS idx_gpe_goal ON goal_progress_events(goal_id, created_at);
+`);
+// 早期版本允许不写原因修改进度；这些没有说明的记录不再显示（逻辑删除，可恢复）
+db.exec(`UPDATE goal_progress_events SET deleted=1, updated_at='${new Date().toISOString()}' WHERE deleted=0 AND (reason IS NULL OR trim(reason)='')`);
 
 // 种子数据：内置分类、规则 v1
 {
