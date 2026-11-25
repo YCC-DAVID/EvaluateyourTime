@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { minutesToPercent, percentToMinutes, type Category } from "../../../../modules/scoring/index.ts";
 import { fmtMinutes } from "../api.ts";
+import { tr } from "../i18n.ts";
 
 export interface AllocDraft {
   category_id: string;
@@ -58,10 +59,10 @@ export function AllocationEditor(props: {
   return (
     <div className="alloc">
       <div className="alloc-head">
-        <span>分类</span>
-        <span>分钟</span>
+        <span>{tr("分类")}</span>
+        <span>{tr("分钟")}</span>
         <span>%</span>
-        <span>说明</span>
+        <span>{tr("说明")}</span>
         <span />
       </div>
       {value.map((a, i) => {
@@ -73,13 +74,13 @@ export function AllocationEditor(props: {
               <select value={a.category_id} onChange={(e) => set(i, { category_id: e.target.value })}>
                 {categories.map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.name}
+                    {tr(c.name)}
                   </option>
                 ))}
               </select>
             </span>
             <DraftNumberInput
-              ariaLabel="分钟"
+              ariaLabel={tr("分钟")}
               min={0}
               max={total}
               step={5}
@@ -87,7 +88,7 @@ export function AllocationEditor(props: {
               onValue={(v) => set(i, { minutes: Math.round(v) })}
             />
             <DraftNumberInput
-              ariaLabel="百分比"
+              ariaLabel={tr("百分比")}
               min={0}
               max={100}
               step={1}
@@ -96,13 +97,13 @@ export function AllocationEditor(props: {
             />
             <input
               type="text"
-              placeholder="可选"
+              placeholder={tr("可选")}
               value={a.note ?? ""}
               onChange={(e) => set(i, { note: e.target.value || null })}
             />
             <span className="alloc-tail">
-              {a.state === "estimated" && <span className="tag est" title="AI 估计，确认后才计入有效工作">估计</span>}
-              <button className="icon" title="删除" onClick={() => props.onChange(value.filter((_, j) => j !== i))}>
+              {a.state === "estimated" && <span className="tag est" title={tr("AI 估计，确认后才计入有效工作")}>{tr("估计")}</span>}
+              <button className="icon" title={tr("删除")} onClick={() => props.onChange(value.filter((_, j) => j !== i))}>
                 ×
               </button>
             </span>
@@ -111,25 +112,25 @@ export function AllocationEditor(props: {
       })}
       <div className="alloc-foot">
         <button className="link" onClick={() => props.onChange([...value, { category_id: nextCat, minutes: Math.max(0, remaining), note: null, state: "confirmed" }])}>
-          + 添加分类
+          {tr("+ 添加分类")}
         </button>
         {remaining < 0 && sum > 0 && (
           <button
             className="link small"
-            title="时段改短后，把各项按原来的比例缩到新时长内"
+            title={tr("时段改短后，把各项按原来的比例缩到新时长内")}
             onClick={() =>
               props.onChange(value.map((x) => ({ ...x, minutes: Math.floor((x.minutes * total) / sum) })).filter((x) => x.minutes > 0))
             }
           >
-            按比例缩到 {fmtMinutes(total)}
+            {tr("按比例缩到")} {fmtMinutes(total)}
           </button>
         )}
         <span className={remaining < 0 ? "error-text" : "muted"}>
           {remaining < 0
-            ? `超出时段 ${fmtMinutes(-remaining)}，请减少`
+            ? tr("超出时段 {0}，请减少", [fmtMinutes(-remaining)])
             : remaining > 0
-              ? `未分配 ${fmtMinutes(remaining)}（保留为不确定，不判低分）`
-              : "已全部分配"}
+              ? tr("未分配 {0}（保留为不确定，不判低分）", [fmtMinutes(remaining)])
+              : tr("已全部分配")}
         </span>
       </div>
     </div>

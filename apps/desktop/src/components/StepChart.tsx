@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { tr } from "../i18n.ts";
 
 // 单序列阶梯折线图：进度、累计时长都是“到某个时刻跳变一次”的量，用阶梯线而不是斜线连接。
 // 一张图只画一个量（不做双纵轴）；悬停时竖线吸附到最近的数据点，提示框显示该点详情。
@@ -24,7 +25,7 @@ const f = (age: number) => Math.log1p(Math.max(0, age) / HOUR);
 
 // 候选刻度（距今时长）；实际只取不重叠的几个
 const TICK_AGES = [0, HOUR, 3 * HOUR, 6 * HOUR, 12 * HOUR, DAY, 2 * DAY, 3 * DAY, 5 * DAY, 7 * DAY, 14 * DAY, 30 * DAY, 60 * DAY, 90 * DAY];
-const fmtAge = (age: number) => (age === 0 ? "现在" : age < DAY ? `${age / HOUR}小时前` : `${age / DAY}天前`);
+const fmtAge = (age: number) => (age === 0 ? tr("现在") : age < DAY ? tr("{0}小时前", [age / HOUR]) : tr("{0}天前", [age / DAY]));
 
 export function StepChart(props: {
   title: string;
@@ -111,7 +112,7 @@ export function StepChart(props: {
           ref={svgRef}
           viewBox={`0 0 ${W} ${H}`}
           role="img"
-          aria-label={`${props.title}：${last ? props.yFormat(last.v) : "无数据"}`}
+          aria-label={tr("{0}：{1}", [props.title, last ? props.yFormat(last.v) : tr("无数据")])}
           onPointerMove={onMove}
           onPointerLeave={() => setHover(null)}
         >
@@ -140,7 +141,7 @@ export function StepChart(props: {
             <g key={`f${ahead}`}>
               <line className="grid vgrid" x1={x(now + ahead)} x2={x(now + ahead)} y1={M.top} y2={M.top + ih} />
               <text className="axis" x={x(now + ahead)} y={H - 6} textAnchor="middle">
-                +{ahead / DAY}天
+                +{ahead / DAY}{tr("天")}
               </text>
             </g>
           ))}
@@ -148,7 +149,7 @@ export function StepChart(props: {
             <g>
               <line className="ddl-line" x1={x(ddl)} x2={x(ddl)} y1={M.top} y2={M.top + ih} />
               <text className="axis ddl-text" x={x(ddl) - 3} y={M.top + 10} textAnchor="end">
-                {future ? (daysLeft === 0 ? "DDL · 今天截止" : `DDL · 剩 ${daysLeft} 天`) : "DDL（已过）"}
+                {future ? (daysLeft === 0 ? tr("DDL · 今天截止") : tr("DDL · 剩 {0} 天", [daysLeft])) : tr("DDL（已过）")}
               </text>
               {future && (
                 <text className="axis ddl-text" x={x(ddl)} y={H - 6} textAnchor="end">

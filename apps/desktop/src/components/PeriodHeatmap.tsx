@@ -11,14 +11,15 @@ import {
   type RuleSet,
 } from "../../../../modules/scoring/index.ts";
 import { api, fmtMinutes, todayStr, toDayEntry, type Entry } from "../api.ts";
-import { gradeColor, HeatLegend } from "./Heatmap.tsx";
+import { heatCellStyle, HeatLegend, scoreColor } from "./Heatmap.tsx";
+import { tr } from "../i18n.ts";
 
 // 周热力图：7 行（周一到周日）× 24 小时，每格 1 小时。
 // 月热力图：日历，每天一格，按当天的平均评价着色。
 // 着色规则和日视图一致：已确认的按时长加权平均分；已记录未评为斜纹；未记录为灰；透明度表示覆盖了多少。
 // 点任意格子跳到那一天的日视图。
 
-const WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+const WEEKDAYS = [tr("周一"), tr("周二"), tr("周三"), tr("周四"), tr("周五"), tr("周六"), tr("周日")];
 const DAY = 86400_000;
 
 const parse = (s: string) => {
@@ -35,11 +36,6 @@ export const monthStartOf = (s: string) => {
   const d = parse(s);
   return todayStr(new Date(d.getFullYear(), d.getMonth(), 1));
 };
-
-function cellStyle(c: HeatCell, rules: RuleSet, slotMinutes: number) {
-  if (c.score == null) return undefined;
-  return { background: gradeColor(c.score, rules), opacity: 0.35 + 0.65 * Math.min(1, c.coveredMinutes / slotMinutes) };
-}
 
 export function PeriodHeatmap(props: {
   mode: "week" | "month";
@@ -101,29 +97,29 @@ export function PeriodHeatmap(props: {
   const title =
     mode === "week"
       ? `${parse(days[0]).getMonth() + 1}/${parse(days[0]).getDate()} – ${parse(days[6]).getMonth() + 1}/${parse(days[6]).getDate()}`
-      : `${parse(monthStart).getFullYear()} 年 ${monthIdx + 1} 月`;
+      : tr("{0} 年 {1} 月", [parse(monthStart).getFullYear(), monthIdx + 1]);
   const today = todayStr(new Date(now));
 
   return (
     <div className="card heatmap-card">
       <div className="card-head">
-        <h3>{mode === "week" ? "周" : "月"}</h3>
+        <h3>{mode === "week" ? tr("周") : tr("月")}</h3>
         {props.modeSwitch}
-        <HeatLegend />
+        <HeatLegend categories={props.categories} />
       </div>
       <div className="period-nav">
-        <button onClick={() => props.onShift(-1)} aria-label={mode === "week" ? "上一周" : "上个月"}>
+        <button onClick={() => props.onShift(-1)} aria-label={mode === "week" ? tr("上一周") : tr("上个月")}>
           ‹
         </button>
         <strong>{title}</strong>
-        <button onClick={() => props.onShift(1)} aria-label={mode === "week" ? "下一周" : "下个月"}>
+        <button onClick={() => props.onShift(1)} aria-label={mode === "week" ? tr("下一周") : tr("下个月")}>
           ›
         </button>
         {stats && (
           <span className="period-sum muted small">
-            记录 {fmtMinutes(stats.recordedMinutes)}
-            {stats.coverage != null && `（覆盖 ${Math.round(stats.coverage * 100)}%）`} · 有效工作 {fmtMinutes(stats.effectiveWorkMinutes)}
-            （日均 {fmtMinutes(Math.round(stats.effectiveWorkMinutes / elapsedDays))}） · 平均评价 {stats.avgScore ?? "—"}
+            {tr("记录")} {fmtMinutes(stats.recordedMinutes)}
+            {stats.coverage != null && tr("（覆盖 {0}%）", [Math.round(stats.coverage * 100)])} {tr("· 有效工作")} {fmtMinutes(stats.effectiveWorkMinutes)}
+            {tr("（日均")} {fmtMinutes(Math.round(stats.effectiveWorkMinutes / elapsedDays))}{tr("） · 平均评价")} {stats.avgScore ?? "—"}
           </span>
         )}
       </div>
@@ -141,10 +137,10 @@ export function PeriodHeatmap(props: {
           </div>
           {days.map((d, i) => {
             const [d0, d1] = localDayRange(d);
-            const cells = entries ? buildHeatmap(entries, d0, d1, 60) : [];
+            const cells = entries ? buildHeatmap(entries, d0, d1, 60, props.categories) : [];
             return (
               <div key={d} className={`wk-row${d === today ? " today" : ""}`}>
-                <button className="wk-label link" onClick={() => props.onPickDay(d)} title="查看这一天">
+                <button className="wk-label link" onClick={() => props.onPickDay(d)} title={tr("查看这一天")}>
                   {WEEKDAYS[i]} {parse(d).getMonth() + 1}/{parse(d).getDate()}
                 </button>
                 {cells.map((c, h) => {
@@ -153,17 +149,17 @@ export function PeriodHeatmap(props: {
                   const label = `${WEEKDAYS[i]} ${h}:00–${h + 1}:00 ${
                     recorded
                       ? c.score != null
-                        ? `${c.score} 分（${GRADE_LABEL[gradeOf(c.score, rules)]}）· 覆盖 ${c.coveredMinutes} 分钟`
-                        : `已记录 ${c.coveredMinutes} 分钟，未评分`
+                        ? tr("{0} 分（{1}）· 覆盖 {2} 分钟", [c.score, tr(GRADE_LABEL[gradeOf(c.score, rules)]), c.coveredMinutes])
+                        : tr("已记录 {0} 分钟，未评分", [c.coveredMinutes])
                       : future
-                        ? "还没到"
-                        : "未记录"
+                        ? tr("还没到")
+                        : tr("未记录")
                   }`;
                   return (
                     <button
                       key={h}
                       className={`wk-cell${recorded && c.score == null ? " pending" : ""}${future ? " future" : ""}${h % 6 === 0 ? " six" : ""}`}
-                      style={cellStyle(c, rules, 60)}
+                      style={heatCellStyle(c, props.categories, 60)}
                       title={label}
                       aria-label={label}
                       onClick={() => props.onPickDay(d)}
@@ -183,7 +179,7 @@ export function PeriodHeatmap(props: {
           ))}
           {days.map((d) => {
             const [d0, d1] = localDayRange(d);
-            const c = entries ? buildHeatmap(entries, d0, d1, 1440)[0] : null;
+            const c = entries ? buildHeatmap(entries, d0, d1, 1440, props.categories)[0] : null;
             const inMonth = parse(d).getMonth() === monthIdx;
             const future = d0 > now;
             const recorded = !!c && c.entryIds.length > 0;
@@ -195,12 +191,12 @@ export function PeriodHeatmap(props: {
               const pct = Math.round(35 + 65 * Math.min(1, c.coveredMinutes / elapsed));
               const grade = gradeOf(c.score, rules);
               style = {
-                background: `color-mix(in srgb, ${gradeColor(c.score, rules)} ${pct}%, var(--none))`,
+                background: `color-mix(in srgb, ${scoreColor(c.score)} ${pct}%, var(--none))`,
                 color: pct >= 60 ? (grade === "fair" ? "#3d3000" : "#fff") : undefined,
               };
             }
             const label = `${parse(d).getMonth() + 1}/${parse(d).getDate()} ${
-              recorded ? `记录 ${fmtMinutes(c!.coveredMinutes)}${c!.score != null ? ` · ${c!.score} 分（${GRADE_LABEL[gradeOf(c!.score, rules)]}）` : " · 未评分"}` : future ? "还没到" : "未记录"
+              recorded ? tr("记录 {0}{1}", [fmtMinutes(c!.coveredMinutes), c!.score != null ? tr(" · {0} 分（{1}）", [c!.score, tr(GRADE_LABEL[gradeOf(c!.score, rules)])]) : tr(" · 未评分")]) : future ? tr("还没到") : tr("未记录")
             }`;
             return (
               <button
@@ -219,7 +215,7 @@ export function PeriodHeatmap(props: {
           })}
         </div>
       )}
-      <p className="hint">点任意格子查看那一天。颜色是已确认记录按时长加权的平均评价，越淡表示记录覆盖越少。</p>
+      <p className="hint">{tr("点任意格子查看那一天。周视图的颜色和日视图一样；月视图格子颜色是当天的平均评价。越淡表示记录覆盖越少。")}</p>
     </div>
   );
 }

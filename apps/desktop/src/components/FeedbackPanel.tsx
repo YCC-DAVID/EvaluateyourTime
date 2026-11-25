@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Question } from "../api.ts";
+import { tr } from "../i18n.ts";
 
 // 评分后的反馈：
 //  - 每个“不确定”项可以直接补充说明（作为事实，重新评分时 AI 优先采用）
@@ -54,19 +55,19 @@ export function FeedbackPanel(props: {
               <li key={u} className={answered ? "answered" : ""}>
                 <div className="u-line">
                   <span>
-                    {stillListed ? "不确定：" : "已澄清："}
+                    {stillListed ? tr("不确定：") : tr("已澄清：")}
                     {u}
                   </span>
                   <button className="link small" onClick={() => setEditing(editing === u ? null : u)}>
-                    {answered ? "修改补充" : "补充说明"}
+                    {answered ? tr("修改补充") : tr("补充说明")}
                   </button>
                 </div>
-                {answered && editing !== u && <div className="u-answer">你的补充：{answered}</div>}
+                {answered && editing !== u && <div className="u-answer">{tr("你的补充：")}{answered}</div>}
                 {editing === u && (
                   <input
                     type="text"
                     autoFocus
-                    placeholder="直接写实际情况，例如：截止时间是今晚 23:59，只能熬夜完成"
+                    placeholder={tr("直接写实际情况，例如：截止时间是今晚 23:59，只能熬夜完成")}
                     value={clar[u] ?? ""}
                     onChange={(e) => setClar({ ...clar, [u]: e.target.value })}
                     onKeyDown={(e) => e.key === "Enter" && setEditing(null)}
@@ -79,24 +80,24 @@ export function FeedbackPanel(props: {
       )}
 
       <button className="link small" onClick={() => setOpen(!open)}>
-        {open ? "▾" : "▸"} 自我反馈与以后改进{(props.reflection || props.improvement) && !open ? "（已填写）" : ""}
+        {open ? "▾" : "▸"} {tr("自我反馈与以后改进")}{(props.reflection || props.improvement) && !open ? tr("（已填写）") : ""}
       </button>
       {open && (
         <div className="fb-fields">
           <label>
-            <span className="small">自我反馈：你自己怎么看这段时间？</span>
+            <span className="small">{tr("自我反馈：你自己怎么看这段时间？")}</span>
             <textarea
               rows={2}
-              placeholder="例如：其实补材料效率挺高，熬夜是因为白天被别的事打断了"
+              placeholder={tr("例如：其实补材料效率挺高，熬夜是因为白天被别的事打断了")}
               value={reflection}
               onChange={(e) => setReflection(e.target.value)}
             />
           </label>
           <label>
-            <span className="small">希望以后改进的地方</span>
+            <span className="small">{tr("希望以后改进的地方")}</span>
             <textarea
               rows={2}
-              placeholder="例如：有 DDL 的投稿提前一天定稿；晚上 12 点后不再开新任务"
+              placeholder={tr("例如：有 DDL 的投稿提前一天定稿；晚上 12 点后不再开新任务")}
               value={improvement}
               onChange={(e) => setImprovement(e.target.value)}
             />
@@ -107,11 +108,11 @@ export function FeedbackPanel(props: {
       {dirty && (
         <div className="actions">
           <button disabled={props.busy} onClick={() => props.onSave(payload(), false)}>
-            保存反馈
+            {tr("保存反馈")}
           </button>
           {props.canRescore && (
             <button className="primary" disabled={props.busy} onClick={() => props.onSave(payload(), true)}>
-              保存并按补充重新评分
+              {tr("保存并按补充重新评分")}
             </button>
           )}
         </div>

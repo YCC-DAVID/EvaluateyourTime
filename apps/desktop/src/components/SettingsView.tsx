@@ -2,11 +2,15 @@ import { useState } from "react";
 import { api, type Meta } from "../api.ts";
 import { DeviceSettings } from "./DeviceSettings.tsx";
 import { ProfileSettings } from "./ProfileSettings.tsx";
+import { AISettingsCard } from "./AISettingsCard.tsx";
+import { EKSettingsCard } from "./EKSettingsCard.tsx";
+import { MobileSettingsCard } from "./MobileSettingsCard.tsx";
+import { lang, setLang, tr } from "../i18n.ts";
 
 const PROVIDER_LABEL = {
-  api: "Claude API（API key，按用量计费）",
-  "claude-cli": "本机 Claude Code（使用你的订阅）",
-  "codex-cli": "本机 Codex（使用你的订阅）",
+  api: tr("Claude API（API key，按用量计费）"),
+  "claude-cli": tr("本机 Claude Code（使用你的订阅）"),
+  "codex-cli": tr("本机 Codex（使用你的订阅）"),
 } as const;
 
 export function SettingsView({ meta, onChanged }: { meta: Meta; onChanged: () => void }) {
@@ -19,7 +23,7 @@ export function SettingsView({ meta, onChanged }: { meta: Meta; onChanged: () =>
     setErr(null);
     try {
       await api.saveSettings({ work_budget_minutes: Math.round(Number(hours) * 60) });
-      setMsg("已保存");
+      setMsg(tr("已保存"));
       onChanged();
     } catch (e) {
       setErr((e as Error).message);
@@ -32,7 +36,7 @@ export function SettingsView({ meta, onChanged }: { meta: Meta; onChanged: () =>
     try {
       const data = JSON.parse(await f.text());
       const r = await api.importData(data);
-      setMsg(`导入完成：${Object.entries(r.counts).map(([k, v]) => `${k} ${v}`).join("，")}`);
+      setMsg(tr("导入完成：{0}", [Object.entries(r.counts).map(([k, v]) => `${k} ${v}`).join(tr("，"))]));
       onChanged();
     } catch (e) {
       setErr((e as Error).message);
@@ -41,71 +45,85 @@ export function SettingsView({ meta, onChanged }: { meta: Meta; onChanged: () =>
 
   return (
     <main className="page">
-      <h2>设置</h2>
+      <h2>{tr("设置")}</h2>
+      <nav className="settings-nav">
+        {(
+          [
+            ["s-lang", "语言 / Language"],
+            ["s-profile", tr("身份")],
+            ["s-budget", tr("工作预算")],
+            ["s-ai", tr("AI 服务")],
+            ["s-device", tr("电脑使用")],
+            ["s-ek", tr("日历与提醒事项")],
+            ["s-mobile", tr("手机")],
+            ["s-data", tr("数据")],
+            ["s-cats", tr("分类")],
+          ] as const
+        ).map(([id, label]) => (
+          <button key={id} className="chip" onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+            {label}
+          </button>
+        ))}
+      </nav>
 
-      <ProfileSettings meta={meta} onChanged={onChanged} />
+      <div className="card" id="s-lang">
+        <h3>语言 / Language</h3>
+        <div className="seg" role="tablist" aria-label="Language">
+          {(
+            [
+              ["zh", "中文"],
+              ["en", "English"],
+            ] as const
+          ).map(([k, label]) => (
+            <button key={k} role="tab" aria-selected={lang === k} className={lang === k ? "on" : ""} onClick={() => lang !== k && setLang(k)}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <p className="muted small">{tr("界面和 AI 的回复（问题、评语、建议）都会换成这个语言。已经写下的记录内容不会被翻译。")}</p>
+      </div>
 
-      <div className="card">
-        <h3>每日有效脑力工作预算</h3>
-        <p className="muted">默认 6 小时。这是产品初始预算，不是医学上限，也不是每天必须完成的指标。只累计你确认过的工作时长。</p>
+      <div id="s-profile">
+        <ProfileSettings meta={meta} onChanged={onChanged} />
+      </div>
+
+      <div className="card" id="s-budget">
+        <h3>{tr("每日有效脑力工作预算")}</h3>
+        <p className="muted">{tr("默认 6 小时。这是产品初始预算，不是医学上限，也不是每天必须完成的指标。只累计你确认过的工作时长。")}</p>
         <div className="actions">
           <input type="number" min={0.5} max={16} step={0.5} value={hours} onChange={(e) => setHours(e.target.value)} style={{ width: 90 }} />
-          <span>小时</span>
+          <span>{tr("小时")}</span>
           <button className="primary" onClick={saveBudget}>
-            保存
+            {tr("保存")}
           </button>
         </div>
       </div>
 
-      <div className="card">
-        <h3>AI 服务</h3>
-        <table className="kv">
-          <tbody>
-            <tr>
-              <td>后端</td>
-              <td>{PROVIDER_LABEL[meta.ai.provider]}</td>
-            </tr>
-            <tr>
-              <td>模型</td>
-              <td>{meta.ai.model}</td>
-            </tr>
-            {meta.ai.provider === "api" ? (
-              <>
-                <tr>
-                  <td>地址</td>
-                  <td>{meta.ai.base_url}</td>
-                </tr>
-                <tr>
-                  <td>API key</td>
-                  <td>{meta.ai.key_configured ? "已配置（只保存在本机 .env）" : "未在 .env 中配置"}</td>
-                </tr>
-              </>
-            ) : (
-              <tr>
-                <td>凭据</td>
-                <td>使用本机 CLI 自己的登录（不读取 .env 里的 API key）；工具全部关闭，在空的临时目录中运行</td>
-              </tr>
-            )}
-            <tr>
-              <td>语音转写</td>
-              <td>{meta.asr.server ? "使用 .env 中配置的转写服务" : "使用浏览器自带语音识别"}</td>
-            </tr>
-          </tbody>
-        </table>
-        <p className="muted small">在项目根目录的 .env 中用 AI_PROVIDER 切换（api / claude-cli / codex-cli），重启服务生效。AI 收到的内容：当前这段记录、分类、进行中的目标、相关记录的标题；开启下面的“发给 AI”时，还有这段时间的电脑应用名和时长。</p>
+      <div id="s-ai">
+        <AISettingsCard onChanged={onChanged} />
       </div>
 
-      <DeviceSettings categories={meta.categories} />
+      <div id="s-device">
+        <DeviceSettings categories={meta.categories} />
+      </div>
 
-      <div className="card">
-        <h3>数据</h3>
-        <p className="muted">数据保存在本机 data/app.db。导出文件包含全部记录、目标和评分历史，可用于备份和恢复。</p>
+      <div id="s-ek">
+        <EKSettingsCard meta={meta} onChanged={onChanged} />
+      </div>
+
+      <div id="s-mobile">
+        <MobileSettingsCard />
+      </div>
+
+      <div className="card" id="s-data">
+        <h3>{tr("数据")}</h3>
+        <p className="muted">{tr("数据保存在本机 data/app.db。导出文件包含全部记录、目标和评分历史，可用于备份和恢复。")}</p>
         <div className="actions">
           <a className="button" href="/api/export" download>
-            导出 JSON
+            {tr("导出 JSON")}
           </a>
           <label className="button">
-            导入 JSON
+            {tr("导入 JSON")}
             <input type="file" accept="application/json" hidden onChange={(e) => e.target.files?.[0] && importFile(e.target.files[0])} />
           </label>
         </div>
@@ -113,19 +131,19 @@ export function SettingsView({ meta, onChanged }: { meta: Meta; onChanged: () =>
         {err && <div className="error-text">{err}</div>}
       </div>
 
-      <div className="card">
-        <h3>分类</h3>
+      <div className="card" id="s-cats">
+        <h3>{tr("分类")}</h3>
         <div className="dist-legend">
           {meta.categories.map((c) => (
             <span key={c.id}>
               <i style={{ background: c.color }} />
-              {c.name}
+              {tr(c.name)}
             </span>
           ))}
         </div>
-        <p className="muted small">分类不等于分数；同类活动在不同背景下可以有不同评价。自定义分类后续加入。</p>
+        <p className="muted small">{tr("分类不等于分数；同类活动在不同背景下可以有不同评价。自定义分类后续加入。")}</p>
       </div>
-      <p className="muted small">设备 ID：{meta.device_id} · 评分规则 {meta.rules.version}</p>
+      <p className="muted small">{tr("设备 ID：")}{meta.device_id} {tr("· 评分规则")} {meta.rules.version}</p>
     </main>
   );
 }

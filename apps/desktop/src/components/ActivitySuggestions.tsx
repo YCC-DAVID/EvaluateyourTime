@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import type { Category } from "../../../../modules/scoring/index.ts";
 import type { Goal } from "../api.ts";
+import { tr } from "../i18n.ts";
 
 // 记录时的备选项：点一下就把文字填进描述框。
 // 目标项会同时把这条记录关联到该目标；常见项只填文字，分类仍由 AI 或你来定。
@@ -10,7 +11,7 @@ import type { Goal } from "../api.ts";
 export const LEVEL_COLOR = { long: "#c9721a", short: "#3b6cf6", task: "#0f9d9a" } as const;
 const tint = (c: string) => ({ "--c": c }) as CSSProperties;
 
-const LEVEL_SHORT = { long: "长期", short: "短期", task: "任务" } as const;
+const LEVEL_SHORT = { long: tr("长期"), short: tr("短期"), task: tr("任务") } as const;
 const LEVEL_ORDER = { short: 0, task: 1, long: 2 } as const;
 
 function daysLeft(ddl: string | null): number | null {
@@ -46,7 +47,7 @@ export function ActivitySuggestions(props: {
     <div className="suggest">
       {goals.length > 0 && (
         <div className="suggest-row">
-          <span className="suggest-label">目标</span>
+          <span className="suggest-label">{tr("目标")}</span>
           <div className="chips">
             {goals.map((g) => {
               const dl = daysLeft(g.ddl);
@@ -56,13 +57,13 @@ export function ActivitySuggestions(props: {
                   key={g.id}
                   className={`chip tinted goal-chip${on ? " on" : ""}`}
                   style={tint(LEVEL_COLOR[g.level])}
-                  title={`${g.title}${g.ddl ? `（DDL ${g.ddl}）` : ""}${on ? " · 已关联，再点取消" : " · 点击填入并关联这条记录"}`}
+                  title={`${g.title}${g.ddl ? tr("（DDL {0}）", [g.ddl]) : ""}${on ? tr(" · 已关联，再点取消") : tr(" · 点击填入并关联这条记录")}`}
                   onClick={() => props.onPickGoal(g)}
                 >
                   {g.is_primary && "★ "}
                   <span className="lvl">{LEVEL_SHORT[g.level]}</span>
                   {g.title.length > 14 ? `${g.title.slice(0, 14)}…` : g.title}
-                  {dl != null && dl >= 0 && dl <= 7 && <span className="ddl">{dl === 0 ? "今天截止" : `${dl} 天`}</span>}
+                  {dl != null && dl >= 0 && dl <= 7 && <span className="ddl">{dl === 0 ? tr("今天截止") : tr("{0} 天", [dl])}</span>}
                 </button>
               );
             })}
@@ -70,13 +71,13 @@ export function ActivitySuggestions(props: {
         </div>
       )}
       <div className="suggest-row">
-        <span className="suggest-label">常见</span>
+        <span className="suggest-label">{tr("常见")}</span>
         <div className="chips">
           {props.deviceChip && (
             <button
               className="chip device-chip"
               disabled={props.deviceChip.disabled}
-              title="按这段时间的电脑使用起草描述和时间分配，说不准的再问你"
+              title={tr("按这段时间的电脑使用起草描述和时间分配，说不准的再问你")}
               onClick={props.deviceChip.onClick}
             >
               {props.deviceChip.label}
@@ -87,9 +88,9 @@ export function ActivitySuggestions(props: {
               key={t.label}
               className="chip tinted small-chip"
               style={tint(props.categories.find((c) => c.id === t.cat)?.color ?? "#9aa0a6")}
-              onClick={() => props.onPickText(t.label)}
+              onClick={() => props.onPickText(tr(t.label))}
             >
-              {t.label}
+              {tr(t.label)}
             </button>
           ))}
         </div>

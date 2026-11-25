@@ -3,7 +3,8 @@
 
 export const ANSWER_SEP = " ＋ ";
 
-export const isExclusive = (option: string) => /记不清|不确定|都不是/.test(option);
+// 中英文都认（界面设成英文时 AI 给的是英文选项）
+export const isExclusive = (option: string) => /记不清|不确定|都不是|not sure|can'?t (remember|recall)|don'?t (remember|know)|none of (these|the above)|unsure/i.test(option);
 
 /** 当前答案里选中了哪些选项（不是选项组合的，例如自己写的，返回 null） */
 export function selectedOptions(answer: string | null | undefined, options: string[]): string[] | null {

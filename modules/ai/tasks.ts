@@ -1,5 +1,5 @@
 // AI 任务：analyze_entry（整理 + 最多 3 个问题）与 score_entry（评分与理由）。
-import { runStructured, type AIConfig } from "./client.ts";
+import { runStructured, type AIConfig, type Effort } from "./client.ts";
 import { allocatePrompt, analyzePrompt, chatPrompt, draftPrompt, guidePrompt, scorePrompt, splitPrompt, type PromptCategory, type PromptEntryBrief, type PromptGoal } from "./prompts.ts";
 import { AllocateOutput, AnalyzeOutput, ChatOutput, DraftOutput, GuideOutput, ScoreOutput, SplitOutput } from "./schemas.ts";
 
@@ -43,9 +43,9 @@ export function splitGoal(p: Parameters<typeof splitPrompt>[0], cfg?: AIConfig) 
   return runStructured(SplitOutput, splitPrompt(p), "medium", cfg);
 }
 
-export function chatTurn(p: Parameters<typeof chatPrompt>[0], cfg?: AIConfig) {
-  // 应用事件也走同一个对话流程，只是消息被标成 <app_event>
-  return runStructured(ChatOutput, chatPrompt(p), "low", cfg);
+export function chatTurn(p: Parameters<typeof chatPrompt>[0], effort: Effort = "low", cfg?: AIConfig) {
+  // 应用事件也走同一个对话流程，只是消息被标成 <app_event>；强度由对话框里的选择决定
+  return runStructured(ChatOutput, chatPrompt(p), effort, cfg);
 }
 
 export function guideEntry(p: Parameters<typeof guidePrompt>[0], cfg?: AIConfig) {

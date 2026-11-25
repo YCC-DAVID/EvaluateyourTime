@@ -13,11 +13,11 @@ export interface Category {
 }
 
 export const BUILTIN_CATEGORIES: Category[] = [
-  { id: "cat_work", name: "工作与学习", kind: "work", color: "#4f7cff", builtin: true },
-  { id: "cat_sport", name: "运动与健康", kind: "sport", color: "#22a06b", builtin: true },
-  { id: "cat_rest", name: "休息与睡眠", kind: "rest", color: "#8e7cc3", builtin: true },
+  { id: "cat_work", name: "工作与学习", kind: "work", color: "#8e44ad", builtin: true },
+  { id: "cat_sport", name: "运动与健康", kind: "sport", color: "#2b7a3d", builtin: true },
+  { id: "cat_rest", name: "休息与睡眠", kind: "rest", color: "#4f7cff", builtin: true },
   { id: "cat_fun", name: "娱乐与社交", kind: "fun", color: "#e8a33d", builtin: true },
-  { id: "cat_life", name: "生活与必要事务", kind: "life", color: "#5aa9c9", builtin: true },
+  { id: "cat_life", name: "生活与必要事务", kind: "life", color: "#4cc3d9", builtin: true },
   { id: "cat_waste", name: "无意消耗", kind: "waste", color: "#d9534f", builtin: true },
   { id: "cat_unknown", name: "未分配或不确定", kind: "unknown", color: "#9aa0a6", builtin: true },
 ];
@@ -186,6 +186,8 @@ export interface DayEntry {
   goal_id: string | null;
   allocations: Allocation[];
   title?: string;
+  /** 记录创建时间：时间重叠时，后建的记录优先（通常是用户在纠正前一条） */
+  createdAt?: string;
 }
 
 export interface HeatCell {
@@ -195,10 +197,109 @@ export interface HeatCell {
   score: number | null; // 覆盖部分按时长加权的平均分；无评分为 null
   entryIds: string[];
   estimated: boolean; // 只有整段平均分，没有真实子段边界
+  /** 这一格里各类活动的分钟数（按记录的分配比例估计）；传了分类才有 */
+  kindMinutes: Partial<Record<CategoryKind, number>>;
+  /** 占比最多的活动类型；没有记录为 null */
+  kind: CategoryKind | null;
 }
 
 function overlapMs(a0: number, a1: number, b0: number, b1: number): number {
   return Math.max(0, Math.min(a1, b1) - Math.max(a0, b0));
+}
+
+type Seg = [number, number];
+/** 从一段时间里扣掉已经被占用的部分，返回剩下的若干小段 */
+function subtract(seg: Seg, taken: Seg[]): Seg[] {
+  let parts: Seg[] = [seg];
+  for (const [t0, t1] of taken)
+    parts = parts.flatMap(([a, b]): Seg[] => {
+      if (t1 <= a || t0 >= b) return [[a, b]];
+      const out: Seg[] = [];
+      if (t0 > a) out.push([a, t0]);
+      if (t1 < b) out.push([t1, b]);
+      return out;
+    });
+  return parts.filter(([a, b]) => b > a);
+}
+
+export interface ResolvedEntry {
+  entry: DayEntry;
+  /** 这条记录实际“拥有”的时间段（扣掉被更新的记录覆盖的部分） */
+  segments: Seg[];
+  totalMs: number;
+  /** 被其他记录覆盖掉的分钟数 */
+  overlappedMinutes: number;
+  /** 扣掉被覆盖部分后的分配：先扣和覆盖它的记录同类的时间（睡眠盖睡眠），其余按比例扣 */
+  allocations: Allocation[];
+}
+
+function deductCovered(e: DayEntry, coveredMs: number, coverers: { e: DayEntry; ms: number }[]): Allocation[] {
+  if (coveredMs <= 0) return e.allocations;
+  const total = (Date.parse(e.end) - Date.parse(e.start)) / 60000;
+  let left = coveredMs / 60000;
+  const mins = new Map<string, number>();
+  for (const a of e.allocations) mins.set(a.category_id, (mins.get(a.category_id) ?? 0) + a.minutes);
+  // 1. 同类先扣：覆盖它的记录在重叠时段里大致是什么类别
+  for (const c of coverers) {
+    const cTotal = (Date.parse(c.e.end) - Date.parse(c.e.start)) / 60000;
+    if (cTotal <= 0) continue;
+    for (const a of c.e.allocations) {
+      const want = (a.minutes / cTotal) * (c.ms / 60000);
+      const have = mins.get(a.category_id) ?? 0;
+      const take = Math.min(want, have, left);
+      if (take > 0) {
+        mins.set(a.category_id, have - take);
+        left -= take;
+      }
+    }
+  }
+  // 2. 剩下的：先扣“未分配”的时间，再按比例扣其余分配
+  const allocated = [...mins.values()].reduce((x, y) => x + y, 0);
+  const unalloc = Math.max(0, total - (coveredMs / 60000 - left) - allocated);
+  left -= Math.min(left, unalloc);
+  if (left > 0 && allocated > 0) {
+    const k = Math.max(0, 1 - left / allocated);
+    for (const [id, m] of mins) mins.set(id, m * k);
+  }
+  return e.allocations.map((a) => {
+    const sameCat = e.allocations.filter((x) => x.category_id === a.category_id).reduce((x, y) => x + y.minutes, 0);
+    return { ...a, minutes: sameCat > 0 ? (a.minutes / sameCat) * (mins.get(a.category_id) ?? 0) : 0 };
+  });
+}
+/**
+ * 处理时间重叠：同一时刻只算一条记录，墙钟时间不会因为重叠而变多。
+ * 后建的记录优先（创建时间相同则开始得晚的优先）；被覆盖的那条只算没被覆盖的部分。
+ */
+export function resolveOverlaps(entries: DayEntry[]): ResolvedEntry[] {
+  const order = [...entries].sort((a, b) => {
+    const ca = a.createdAt ? Date.parse(a.createdAt) : 0;
+    const cb = b.createdAt ? Date.parse(b.createdAt) : 0;
+    return cb - ca || Date.parse(b.start) - Date.parse(a.start);
+  });
+  const taken: { seg: Seg; e: DayEntry }[] = [];
+  const out = new Map<string, ResolvedEntry>();
+  for (const e of order) {
+    const s0 = Date.parse(e.start);
+    const s1 = Date.parse(e.end);
+    const segments = s1 > s0 ? subtract([s0, s1], taken.map((t) => t.seg)) : [];
+    const own = segments.reduce((x, [a, b]) => x + b - a, 0);
+    const covered = Math.max(0, s1 - s0) - own;
+    // 谁盖住了它、各盖了多少
+    const by = new Map<DayEntry, number>();
+    for (const t of taken) {
+      const ov = overlapMs(s0, s1, t.seg[0], t.seg[1]);
+      if (ov > 0) by.set(t.e, (by.get(t.e) ?? 0) + ov);
+    }
+    out.set(e.id, {
+      entry: e,
+      segments,
+      totalMs: Math.max(0, s1 - s0),
+      overlappedMinutes: Math.round(covered / 60000),
+      allocations: deductCovered(e, covered, [...by].map(([ce, ms]) => ({ e: ce, ms }))),
+    });
+    taken.push(...segments.map((seg) => ({ seg, e })));
+  }
+  return entries.map((e) => out.get(e.id)!);
 }
 
 /**
@@ -206,9 +307,11 @@ function overlapMs(a0: number, a1: number, b0: number, b1: number): number {
  * （夏令时当天不一定是 24 小时，因此由调用方传入）。
  * 当前记录只有整段分配，没有子段，所以每段只能画整段平均分，并标为估计。
  */
-export function buildHeatmap(entries: DayEntry[], dayStartMs: number, dayEndMs: number, cellMinutes = 15): HeatCell[] {
+export function buildHeatmap(entries: DayEntry[], dayStartMs: number, dayEndMs: number, cellMinutes = 15, categories?: Category[]): HeatCell[] {
+  const kindOf = new Map((categories ?? []).map((c) => [c.id, c.kind]));
   const cells: HeatCell[] = [];
   const step = cellMinutes * 60000;
+  const resolved = resolveOverlaps(entries);
   for (let t = dayStartMs; t < dayEndMs; t += step) {
     const c0 = t;
     const c1 = Math.min(t + step, dayEndMs);
@@ -216,11 +319,24 @@ export function buildHeatmap(entries: DayEntry[], dayStartMs: number, dayEndMs: 
     let scoredMs = 0;
     let weighted = 0;
     const ids: string[] = [];
-    for (const e of entries) {
-      const ov = overlapMs(c0, c1, Date.parse(e.start), Date.parse(e.end));
+    const kindMs: Partial<Record<CategoryKind, number>> = {};
+    for (const { entry: e, segments, allocations } of resolved) {
+      const ov = segments.reduce((x, [a, b]) => x + overlapMs(c0, c1, a, b), 0);
       if (ov <= 0) continue;
       covered += ov;
       ids.push(e.id);
+      if (categories) {
+        // 没有子段：按这条记录（扣掉被覆盖部分后）的分配比例摊到这一格
+        const owned = segments.reduce((x, [a, b]) => x + b - a, 0) / 60000;
+        let used = 0;
+        for (const a of allocations) {
+          const k = kindOf.get(a.category_id) ?? "unknown";
+          const share = owned > 0 ? Math.min(1, a.minutes / owned) : 0;
+          kindMs[k] = (kindMs[k] ?? 0) + ov * share;
+          used += share;
+        }
+        if (used < 1) kindMs.unknown = (kindMs.unknown ?? 0) + ov * (1 - used);
+      }
       if (e.overall != null) { scoredMs += ov; weighted += e.overall * ov; }
     }
     cells.push({
@@ -230,6 +346,8 @@ export function buildHeatmap(entries: DayEntry[], dayStartMs: number, dayEndMs: 
       score: scoredMs > 0 ? Math.round(weighted / scoredMs) : null,
       entryIds: ids,
       estimated: ids.length > 0,
+      kindMinutes: Object.fromEntries(Object.entries(kindMs).map(([k, v]) => [k, Math.round((v as number) / 60000)])),
+      kind: ids.length ? ((Object.entries(kindMs).sort((a, b) => (b[1] as number) - (a[1] as number))[0]?.[0] as CategoryKind | undefined) ?? "unknown") : null,
     });
   }
   return cells;
@@ -246,7 +364,7 @@ export interface DayStats {
   primaryGoalShare: number | null; // 没有工作或没有主要目标时为 null，而不是除以零
   avgScore: number | null;
   minutesByKind: Record<CategoryKind, number>;
-  prorated: boolean; // 有跨天记录被按比例分摊
+  prorated: boolean; // 有跨天或被其他记录覆盖的记录被按比例分摊
 }
 
 export function computeDayStats(
@@ -266,16 +384,15 @@ export function computeDayStats(
   let scoreW = 0;
   let scoreMs = 0;
   let prorated = false;
-  for (const e of entries) {
-    const s = Date.parse(e.start);
-    const en = Date.parse(e.end);
-    const total = en - s;
-    const ov = overlapMs(dayStartMs, dayEndMs, s, en);
-    if (ov <= 0 || total <= 0) continue;
+  for (const { entry: e, segments, allocations, overlappedMinutes } of resolveOverlaps(entries)) {
+    // 只算这条记录“拥有”的时间（重叠部分归后建的记录）；分配已经扣掉了被覆盖的部分
+    const owned = segments.reduce((x, [a, b]) => x + b - a, 0);
+    const ov = segments.reduce((x, [a, b]) => x + overlapMs(dayStartMs, dayEndMs, a, b), 0);
+    if (ov <= 0 || owned <= 0) continue;
     recordedMs += ov;
-    const frac = ov / total; // 跨天记录按时长比例分摊（属于估计）
-    if (frac < 1) prorated = true;
-    for (const a of e.allocations) {
+    const frac = ov / owned; // 跨天记录按时长比例分摊（属于估计）
+    if (frac < 1 || overlappedMinutes > 0) prorated = true;
+    for (const a of allocations) {
       const kind = byId.get(a.category_id)?.kind ?? "unknown";
       const m = a.minutes * frac;
       minutesByKind[kind] += m;

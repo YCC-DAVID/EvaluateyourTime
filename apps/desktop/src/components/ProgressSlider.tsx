@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { tr } from "../i18n.ts";
 
 // 进度拖条：实色是原来的进度，浅色是这次拖动的变化（倒退时为红色），右侧显示变化量。
 // onCommit 在松手或键盘调整结束时触发，用于需要立即保存的地方。
@@ -26,7 +27,7 @@ export function ProgressSlider(props: {
         step={1}
         value={value}
         disabled={props.disabled}
-        aria-label="进度"
+        aria-label={tr("进度")}
         style={
           {
             "--c": props.color,

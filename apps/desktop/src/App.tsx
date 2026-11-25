@@ -1,5 +1,7 @@
+import { ModelPicker } from "./components/ModelPicker.tsx";
+import { useAppRefresh } from "./useAppRefresh.ts";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, todayStr, toDayEntry, type Entry, type Meta } from "./api.ts";
+import { api, todayStr, toDayEntry, type CalEvent, type Entry, type Meta } from "./api.ts";
 import { backfillWindowStart, localDayRange, buildHeatmap, computeDayStats, type DayEntry } from "../../../modules/scoring/index.ts";
 import { Heatmap, ModeSwitch, type HeatMode } from "./components/Heatmap.tsx";
 import { PeriodHeatmap } from "./components/PeriodHeatmap.tsx";
@@ -9,6 +11,8 @@ import { RecordPanel, type RecordTarget } from "./components/RecordPanel.tsx";
 import { GoalsView } from "./components/GoalsView.tsx";
 import { SettingsView } from "./components/SettingsView.tsx";
 import { ChatView } from "./components/ChatView.tsx";
+import { DayEvents } from "./components/DayEvents.tsx";
+import { lang, tr } from "./i18n.ts";
 
 type Tab = "today" | "chat" | "goals" | "settings";
 
@@ -21,10 +25,35 @@ export function App() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const [heatMode, setHeatMode] = useState<HeatMode>("day");
+  const [calEvents, setCalEvents] = useState<CalEvent[]>([]);
 
   const [d0, d1] = useMemo(() => localDayRange(day), [day]);
 
-  const reloadMeta = useCallback(() => api.meta().then(setMeta).catch((e) => setLoadError(e.message)), []);
+  const reloadMeta = useCallback(
+    () =>
+      api
+        .meta()
+        .then((m) => {
+          // 语言以服务端为准：在别的窗口（浏览器 / 程序坞应用）改过的话，这里跟着换
+          if (m.language && m.language !== lang) {
+            localStorage.setItem("ui.lang", m.language);
+            location.reload();
+          }
+          setMeta(m);
+        })
+        .catch((e) => setLoadError(e.message)),
+    [],
+  );
+  const reloadEvents = useCallback(
+    () =>
+      api
+        .calendarEvents(new Date(d0).toISOString(), new Date(d1).toISOString())
+        .then(setCalEvents)
+        .catch(() => setCalEvents([])),
+    [d0, d1],
+  );
+  useEffect(() => void reloadEvents(), [reloadEvents, now]);
+
   const reloadEntries = useCallback(
     () =>
       api
@@ -38,6 +67,11 @@ export function App() {
   );
 
   useEffect(() => void reloadMeta(), [reloadMeta]);
+  // 窗口回到前台时刷新数据；服务更新后提示刷新页面
+  const updated = useAppRefresh(() => {
+    reloadMeta();
+    reloadEntries();
+  });
   useEffect(() => void reloadEntries(), [reloadEntries]);
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 60_000);
@@ -50,7 +84,7 @@ export function App() {
     () => entries.map(toDayEntry),
     [entries],
   );
-  const cells = useMemo(() => buildHeatmap(dayEntries, d0, d1), [dayEntries, d0, d1]);
+  const cells = useMemo(() => buildHeatmap(dayEntries, d0, d1, 15, meta?.categories), [dayEntries, d0, d1, meta?.categories]);
   const stats = useMemo(
     () =>
       meta
@@ -85,14 +119,14 @@ export function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <div className="brand">时间记录</div>
+        <div className="brand">{tr("时间记录")}</div>
         <nav>
           {(
             [
-              ["today", "今天"],
-              ["chat", "对话"],
-              ["goals", "目标"],
-              ["settings", "设置"],
+              ["today", tr("今天")],
+              ["chat", tr("对话")],
+              ["goals", tr("目标")],
+              ["settings", tr("设置")],
             ] as const
           ).map(([k, label]) => (
             <button
@@ -111,7 +145,16 @@ export function App() {
             </button>
           ))}
         </nav>
-        <div className="motto">工作认真工作 · 娱乐尽兴娱乐 · 休息安心休息</div>
+        <div className="motto">{tr("工作认真工作 · 娱乐尽兴娱乐 · 休息安心休息")}</div>
+        {updated && (
+          <button className="update-pill" onClick={() => location.reload()}>
+            {tr("有新版本 · 点此刷新")}
+          </button>
+        )}
+        <button className="icon refresh-btn" title={tr("刷新")} aria-label={tr("刷新")} onClick={() => location.reload()}>
+          ⟳
+        </button>
+        <ModelPicker onOpenSettings={() => setTab("settings")} />
       </header>
 
       {loadError && <div className="banner error">{loadError}</div>}
@@ -120,17 +163,18 @@ export function App() {
         <main className="today">
           <section className="col left">
             <div className="daynav">
-              <button onClick={() => shiftDay(-1)} aria-label="前一天">‹</button>
+              <button onClick={() => shiftDay(-1)} aria-label={tr("前一天")}>‹</button>
               <input type="date" value={day} onChange={(e) => e.target.value && setDay(e.target.value)} />
-              <button onClick={() => shiftDay(1)} aria-label="后一天">›</button>
+              <button onClick={() => shiftDay(1)} aria-label={tr("后一天")}>›</button>
               {day !== todayStr() && (
                 <button className="link" onClick={() => setDay(todayStr())}>
-                  回到今天
+                  {tr("回到今天")}
                 </button>
               )}
             </div>
             {heatMode === "day" ? (
             <Heatmap
+              categories={meta.categories}
               modeSwitch={modeSwitch}
               cells={cells}
               entries={entries}
@@ -140,6 +184,7 @@ export function App() {
               onPickEmpty={(start, end) => setTarget({ kind: "new", start, end })}
               backfillFrom={backfillWindowStart(now)}
               now={now}
+              events={calEvents}
               picked={target.kind === "new" && target.start && target.end ? { start: target.start.getTime(), end: target.end.getTime() } : null}
             />
             ) : (
@@ -162,6 +207,20 @@ export function App() {
               />
             )}
             {stats && <DayStatsCard stats={stats} meta={meta} primaryGoal={primaryGoal} />}
+            <DayEvents
+              events={calEvents}
+              entries={entries}
+              goals={meta.goals}
+              now={now}
+              backfillFrom={backfillWindowStart(now)}
+              onBackfill={(e) =>
+                setTarget({ kind: "new", start: new Date(e.start_utc), end: new Date(e.end_utc), prefillText: e.title, goalId: e.goal_id })
+              }
+              onLink={async (title, goalId) => {
+                await api.setCalendarRule(title, goalId);
+                reloadEvents();
+              }}
+            />
             <Timeline
               entries={entries}
               dayStart={d0}
@@ -198,9 +257,11 @@ export function App() {
             setTarget({ kind: "edit", id });
             setTab("today");
           }}
+          onOpenSettings={() => setTab("settings")}
           side={
             <>
               <Heatmap
+                categories={meta.categories}
                 cells={cells}
                 entries={entries}
                 rules={meta.rules}

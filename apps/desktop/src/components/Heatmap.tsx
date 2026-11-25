@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { GRADE_LABEL, gradeOf, type HeatCell, type RuleSet } from "../../../../modules/scoring/index.ts";
-import { fmtMinutes, hm, type Entry } from "../api.ts";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { GRADE_LABEL, gradeOf, type Category, type CategoryKind, type HeatCell, type RuleSet } from "../../../../modules/scoring/index.ts";
+import { fmtMinutes, hm, type CalEvent, type Entry } from "../api.ts";
+import { tr } from "../i18n.ts";
 
 export function gradeColor(score: number | null, rules: RuleSet): string {
   const g = gradeOf(score, rules);
@@ -11,26 +12,94 @@ const PER_ROW = 16; // 每行 4 小时，每格 15 分钟
 
 export type HeatMode = "day" | "week" | "month";
 
-export function HeatLegend() {
+// ---------- 着色 ----------
+// 热力图看的是“打分”：非休息的时间按分数着色，越绿越好、越红越偏离，中间是黄。
+// 休息 / 睡眠不好用好坏评判，占一格大半的就画成蓝色（休息分类的颜色），不按分数上色。
+
+/** 分数 → 颜色：45 分及以下红，60 分左右黄，80 分及以上绿，中间连续过渡 */
+export function scoreColor(score: number): string {
+  const stops: [number, string][] = [
+    [45, "var(--poor)"],
+    [62, "var(--fair)"],
+    [80, "var(--good)"],
+  ];
+  if (score <= stops[0][0]) return stops[0][1];
+  if (score >= stops[stops.length - 1][0]) return stops[stops.length - 1][1];
+  for (let i = 1; i < stops.length; i++) {
+    const [s1, c1] = stops[i];
+    const [s0, c0] = stops[i - 1];
+    if (score <= s1) return `color-mix(in oklab, ${c1} ${Math.round(((score - s0) / (s1 - s0)) * 100)}%, ${c0})`;
+  }
+  return stops[stops.length - 1][1];
+}
+
+// 悬停提示里用的活动名
+const KIND_ORDER: [CategoryKind, string][] = [
+  ["work", tr("工作")],
+  ["rest", tr("休息")],
+  ["fun", tr("娱乐")],
+  ["life", tr("生活")],
+  ["sport", tr("运动")],
+  ["waste", tr("消耗")],
+];
+
+export function kindColor(kind: CategoryKind | null, categories: Category[]): string {
+  return categories.find((c) => c.kind === kind)?.color ?? "#9aa0a6";
+}
+
+/** 这一格主要是休息吗（休息占这一格已记录时间的一半以上） */
+export function isRestCell(c: HeatCell): boolean {
+  const total = Object.values(c.kindMinutes).reduce((x, y) => x + (y ?? 0), 0);
+  return total > 0 && (c.kindMinutes.rest ?? 0) * 2 >= total;
+}
+
+/** 一格的样式；slotMinutes 用来算覆盖比例（覆盖少的格子更淡） */
+export function heatCellStyle(c: HeatCell, categories: Category[], slotMinutes: number): CSSProperties | undefined {
+  if (!c.entryIds.length) return undefined;
+  const opacity = 0.4 + 0.6 * Math.min(1, c.coveredMinutes / slotMinutes);
+  if (isRestCell(c)) {
+    const blue = kindColor("rest", categories);
+    if (c.score != null) return { background: blue, opacity };
+    const a = `color-mix(in srgb, ${blue} 30%, var(--none))`;
+    const b = `color-mix(in srgb, ${blue} 65%, var(--none))`;
+    return { background: `repeating-linear-gradient(45deg, ${a}, ${a} 3px, ${b} 3px, ${b} 5px)`, opacity };
+  }
+  if (c.score == null) return undefined; // 已记录未评：斜纹（样式表）
+  return { background: scoreColor(c.score), opacity };
+}
+
+export function HeatLegend({ categories }: { categories: Category[] }) {
   return (
     <div className="legend">
-      <span><i style={{ background: "var(--good)" }} />较好</span>
-      <span><i style={{ background: "var(--fair)" }} />一般</span>
-      <span><i style={{ background: "var(--poor)" }} />偏离</span>
-      <span><i className="pending" />已记录未评</span>
-      <span><i style={{ background: "var(--none)" }} />未记录</span>
+      <span className="score-ramp">
+        {tr("低分")}
+        <i className="ramp" />
+        {tr("高分")}
+      </span>
+      <span>
+        <i style={{ background: kindColor("rest", categories) }} />
+        {tr("休息（不评好坏）")}
+      </span>
+      <span>
+        <i className="pending" />
+        {tr("已记录未评")}
+      </span>
+      <span>
+        <i style={{ background: "var(--none)" }} />
+        {tr("未记录")}
+      </span>
     </div>
   );
 }
 
 export function ModeSwitch({ mode, onChange }: { mode: HeatMode; onChange: (m: HeatMode) => void }) {
   return (
-    <div className="seg" role="tablist" aria-label="热力图范围">
+    <div className="seg" role="tablist" aria-label={tr("热力图范围")}>
       {(
         [
-          ["day", "日"],
-          ["week", "周"],
-          ["month", "月"],
+          ["day", tr("日")],
+          ["week", tr("周")],
+          ["month", tr("月")],
         ] as const
       ).map(([m, label]) => (
         <button key={m} role="tab" aria-selected={mode === m} className={mode === m ? "on" : ""} onClick={() => onChange(m)}>
@@ -45,6 +114,7 @@ export function Heatmap(props: {
   cells: HeatCell[];
   entries: Entry[];
   rules: RuleSet;
+  categories: Category[];
   selectedId: string | null;
   onPick: (entryId: string) => void;
   /** 选中一段空白时间（单格点击或拖选多格）来补录 */
@@ -56,8 +126,17 @@ export function Heatmap(props: {
   picked?: { start: number; end: number } | null;
   /** 标题旁的日/周/月切换 */
   modeSwitch?: ReactNode;
+  /** 当天的日程（虚线框标出） */
+  events?: CalEvent[];
 }) {
+  const evOf = (c: HeatCell) => (props.events ?? []).filter((e) => !e.all_day && Date.parse(e.start_utc) < c.end && Date.parse(e.end_utc) > c.start);
   const { cells, rules } = props;
+  const kindLabel = (c: HeatCell) =>
+    Object.entries(c.kindMinutes)
+      .filter(([, m]) => (m as number) > 0)
+      .sort((a, b) => (b[1] as number) - (a[1] as number))
+      .map(([k, m]) => tr("{0} {1} 分", [KIND_ORDER.find(([x]) => x === k)?.[1] ?? tr("未分配"), m]))
+      .join(tr("、"));
   const rows: HeatCell[][] = [];
   for (let i = 0; i < cells.length; i += PER_ROW) rows.push(cells.slice(i, i + PER_ROW));
   const titleOf = (id: string) => {
@@ -120,9 +199,9 @@ export function Heatmap(props: {
   return (
     <div className="card heatmap-card">
       <div className="card-head">
-        <h3>24 小时</h3>
+        <h3>{tr("24 小时")}</h3>
         {props.modeSwitch}
-        <HeatLegend />
+        <HeatLegend categories={props.categories} />
       </div>
       <div className="heatmap" onPointerMove={onGridMove}>
         {/* 顶部刻度：每组 1 小时，组内 15/30/45 分 */}
@@ -144,25 +223,27 @@ export function Heatmap(props: {
               const coverage = c.coveredMinutes / 15;
               const label = recorded
                 ? `${hm(c.start)}–${hm(c.end)} ${c.entryIds.map(titleOf).join(" / ")}${
-                    scored ? ` · ${c.score} 分（${GRADE_LABEL[gradeOf(c.score, rules)]}）· 整段平均，估计` : " · 未评分"
-                  }${coverage < 1 ? ` · 覆盖 ${c.coveredMinutes} 分钟` : ""}`
+                    scored ? tr(" · {0} 分（{1}）· 整段平均，估计", [c.score, tr(GRADE_LABEL[gradeOf(c.score, rules)])]) : tr(" · 未评分")
+                  }${coverage < 1 ? tr(" · 覆盖 {0} 分钟", [c.coveredMinutes]) : ""}${kindLabel(c) ? tr("\n{0}（按分配比例估计）", [kindLabel(c)]) : ""}`
                 : c.end <= props.backfillFrom
-                  ? `${hm(c.start)}–${hm(c.end)} 未记录（超过 3 天，不能补录）`
+                  ? tr("{0}–{1} 未记录（超过 3 天，不能补录）", [hm(c.start), hm(c.end)])
                   : c.start >= props.now
-                    ? `${hm(c.start)}–${hm(c.end)} 还没到`
-                    : `${hm(c.start)}–${hm(c.end)} 未记录，点击或拖选补录`;
+                    ? tr("{0}–{1} 还没到", [hm(c.start), hm(c.end)])
+                    : tr("{0}–{1} 未记录，点击或拖选补录", [hm(c.start), hm(c.end)]);
               const selected = props.selectedId && c.entryIds.includes(props.selectedId);
+              const evs = evOf(c);
               const inSel = live && idx >= live.lo && idx <= live.hi;
               const picked = !inSel && props.picked && c.start < props.picked.end && c.end > props.picked.start;
               return (
                 <button
                   key={ci}
                   data-idx={idx}
-                  className={`hm-cell${ci % 4 === 0 ? " hour-start" : ""}${recorded && !scored ? " pending" : ""}${selected ? " selected" : ""}${inSel ? " in-sel" : ""}${picked ? " picked" : ""}`}
-                  style={scored ? { background: gradeColor(c.score, rules), opacity: 0.35 + 0.65 * coverage } : undefined}
-                  title={label}
+                  className={`hm-cell${ci % 4 === 0 ? " hour-start" : ""}${recorded && !scored ? " pending" : ""}${selected ? " selected" : ""}${inSel ? " in-sel" : ""}${picked ? " picked" : ""}${evs.length ? " has-event" : ""}`}
+                  style={heatCellStyle(c, props.categories, 15)}
+                  title={evs.length ? `${label}\n📅 ${evs.map((e) => e.title).join(" / ")}` : label}
                   aria-label={label}
-                  disabled={!recorded && !inWindow(c)}
+                  data-event={evs.length ? "1" : undefined}
+                  disabled={!recorded && !inWindow(c) && !evs.length}
                   onPointerDown={(e) => {
                     if (e.button !== 0) return;
                     e.preventDefault(); // 防止拖动时选中文字
@@ -181,10 +262,10 @@ export function Heatmap(props: {
       <p className="hint">
         {live && sel?.moved ? (
           <strong className="sel-live">
-            {hm(live.start)}–{hm(live.end)} · {fmtMinutes(Math.round((live.end - live.start) / 60000))}，松手后记录这一段
+            {hm(live.start)}–{hm(live.end)} · {fmtMinutes(Math.round((live.end - live.start) / 60000))}{tr("，松手后记录这一段")}
           </strong>
         ) : (
-          "点一格查看或补录，按住拖动可选多格一起记录。没有具体子段时，整段按平均分着色（估计）。"
+          tr("点一格查看或补录，按住拖动可选多格一起记录。颜色是分数：越绿越好、越红越偏离；休息为主的时间画成蓝色，不评好坏。没有具体子段时按整段平均（估计）。")
         )}
       </p>
     </div>

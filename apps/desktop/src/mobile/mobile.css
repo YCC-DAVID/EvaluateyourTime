@@ -1,0 +1,47 @@
+/* 手机版：全屏聊天。复用电脑版的气泡、操作卡片、评分面板样式，这里只管整体布局。 */
+html, body.m-body { height: 100%; margin: 0; overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
+body.m-body #root { height: 100%; }
+.m-app { display: flex; flex-direction: column; height: 100dvh; max-width: 720px; margin: 0 auto; }
+
+.m-head { display: flex; align-items: center; gap: 8px; padding: calc(env(safe-area-inset-top) + 6px) 10px 8px; border-bottom: 1px solid var(--line); background: var(--card); }
+.m-title { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; }
+.m-title strong { font-size: 15px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-status { font-size: 11px; color: var(--muted); }
+.m-status.on::before { content: "● "; color: #0f9d9a; }
+.m-status.off { color: #c9721a; }
+.m-status.off::before { content: "● "; }
+.m-icon-btn { width: 38px; height: 38px; border: none; background: none; font-size: 20px; border-radius: 10px; }
+.m-icon-btn:active { background: rgba(0,0,0,.06); }
+
+.m-scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 12px 10px; display: flex; flex-direction: column; gap: 10px; }
+.m-scroll .bubble { max-width: 88%; font-size: 15px; }
+.m-scroll .bubble-row.assistant .bubble { max-width: 96%; }
+.m-scroll .action-card .actions button { min-height: 36px; }
+.m-empty { margin: auto 0; text-align: center; }
+.m-empty .chips { justify-content: center; }
+.m-written { font-size: 11px; opacity: .75; margin-top: 4px; }
+.m-queued { opacity: .75; }
+.m-queued.failed { opacity: 1; background: #fdecea !important; color: #8a1c12 !important; }
+.m-q-state { font-size: 11px; margin-top: 4px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.m-queued.failed .link { color: inherit; text-decoration: underline; }
+
+.m-notice { margin: 0 10px 6px; padding: 8px 10px; border-radius: 8px; background: #fff4e5; color: #7a4a0c; font-size: 13px; }
+.m-input { display: flex; gap: 8px; align-items: flex-end; padding: 8px 10px calc(env(safe-area-inset-bottom) + 8px); border-top: 1px solid var(--line); background: var(--card); }
+.m-input textarea { flex: 1; resize: none; font-size: 16px; /* 小于 16px 时 iOS 会自动放大页面 */ max-height: 140px; field-sizing: content; min-height: 38px; padding: 8px 10px; border-radius: 18px; }
+.m-input button.primary { min-height: 38px; border-radius: 18px; padding: 0 16px; }
+
+.m-sheet-bg { position: fixed; inset: 0; background: rgba(0,0,0,.3); z-index: 80; display: flex; align-items: flex-end; }
+.m-sheet { width: 100%; max-height: 75dvh; background: var(--card); border-radius: 16px 16px 0 0; padding: 14px 14px calc(env(safe-area-inset-bottom) + 14px); display: flex; flex-direction: column; gap: 10px; }
+.m-sheet-head { display: flex; justify-content: space-between; align-items: center; }
+.m-sheet-list { overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.m-sheet-list .thread-item { border: none; background: none; text-align: left; padding: 10px 8px; }
+.m-sheet-list .thread-item.on { background: rgba(59,108,246,.1); }
+
+.m-pair { max-width: 360px; margin: 0 auto; padding: calc(env(safe-area-inset-top) + 40px) 20px 30px; display: flex; flex-direction: column; gap: 12px; text-align: center; }
+.m-pair-icon { width: 72px; height: 72px; margin: 0 auto; border-radius: 18px; display: block; }
+.m-hint { background: #eef3ff; border-radius: 10px; padding: 10px; font-size: 14px; text-align: left; }
+.m-code { font-size: 32px; letter-spacing: 10px; text-align: center; padding: 10px; font-variant-numeric: tabular-nums; }
+.m-field { display: flex; flex-direction: column; gap: 4px; text-align: left; font-size: 13px; color: var(--muted); }
+.m-field input { font-size: 16px; }
+.m-wide { width: 100%; min-height: 44px; }
+.m-update { border: none; background: #3b6cf6; color: #fff; padding: calc(env(safe-area-inset-top) + 6px) 10px 6px; font-size: 13px; }

@@ -124,6 +124,13 @@ async function install() {
   step("构建界面");
   run(path.join(PROJECT, "node_modules", ".bin", "vite"), ["build"], { cwd: PROJECT });
 
+  step("编译时间记录助手（读日历、读写提醒事项）");
+  try {
+    run(process.execPath, [path.join(PROJECT, "scripts", "build-helper.mjs")], { cwd: PROJECT });
+  } catch {
+    console.log("  助手编译失败（需要 Xcode 命令行工具），日历和提醒事项功能暂时不可用");
+  }
+
   step(`同步程序到 ${APP}`);
   fs.mkdirSync(APP, { recursive: true });
   fs.mkdirSync(DATA, { recursive: true });
@@ -146,8 +153,17 @@ async function install() {
   step("注册登录项并启动");
   fs.mkdirSync(path.dirname(PLIST), { recursive: true });
   fs.writeFileSync(PLIST, plist());
-  if (loaded()) quiet("launchctl", ["bootout", `${DOMAIN}/${LABEL}`]);
-  run("launchctl", ["bootstrap", DOMAIN, PLIST]);
+  if (loaded()) {
+    quiet("launchctl", ["bootout", `${DOMAIN}/${LABEL}`]);
+    // bootout 是异步的：等旧服务完全退出，否则 bootstrap 会报 Input/output error
+    for (let i = 0; i < 40 && (loaded() || portInUseBy().length); i++) await new Promise((r) => setTimeout(r, 250));
+  }
+  let ok = false;
+  for (let i = 0; i < 5 && !ok; i++) {
+    ok = quiet("launchctl", ["bootstrap", DOMAIN, PLIST]).status === 0 || loaded();
+    if (!ok) await new Promise((r) => setTimeout(r, 1000));
+  }
+  if (!ok) throw new Error("launchctl bootstrap 失败；可以稍后再运行一次 npm run autostart:install");
   quiet("launchctl", ["enable", `${DOMAIN}/${LABEL}`]);
   if (await waitUp()) console.log(`\n✓ 已在后台运行：http://127.0.0.1:${PORT}\n  数据：${DATA}\n  日志：${path.join(LOGS, "server.log")}`);
   else console.log(`\n✗ 启动后没有响应，看日志：${path.join(LOGS, "server.log")}`);

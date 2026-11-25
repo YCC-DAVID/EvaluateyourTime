@@ -2,13 +2,14 @@ import type { CSSProperties } from "react";
 import { GRADE_LABEL, dominantKind, gradeOf, type Category } from "../../../../modules/scoring/index.ts";
 import { fmtMinutes, hm, type Entry, type EntryStatus } from "../api.ts";
 import { GapDevice } from "./GapDevice.tsx";
+import { tr } from "../i18n.ts";
 
 export const STATUS_LABEL: Record<EntryStatus, string> = {
-  draft: "草稿",
-  pending_ai: "分析中",
-  needs_confirmation: "待确认",
-  confirmed: "已确认",
-  analysis_failed: "分析失败",
+  draft: tr("草稿"),
+  pending_ai: tr("分析中"),
+  needs_confirmation: tr("待确认"),
+  confirmed: tr("已确认"),
+  analysis_failed: tr("分析失败"),
 };
 
 export function Timeline(props: {
@@ -45,9 +46,9 @@ export function Timeline(props: {
   return (
     <div className="card">
       <div className="card-head">
-        <h3>时间轴</h3>
+        <h3>{tr("时间轴")}</h3>
       </div>
-      {items.length === 0 && <p className="muted">这一天还没有记录。</p>}
+      {items.length === 0 && <p className="muted">{tr("这一天还没有记录。")}</p>}
       <ul className="timeline">
         {items.map((it, i) =>
           it.kind === "gap" ? (
@@ -55,13 +56,13 @@ export function Timeline(props: {
               <span className="tl-time">
                 {hm(it.s)}–{hm(it.t)}
               </span>
-              <span className="muted">未记录 {fmtMinutes(Math.round((it.t - it.s) / 60000))}</span>
+              <span className="muted">{tr("未记录")} {fmtMinutes(Math.round((it.t - it.s) / 60000))}</span>
               {it.t <= props.backfillFrom ? (
-                <span className="muted small">超过 3 天，不能补录</span>
+                <span className="muted small">{tr("超过 3 天，不能补录")}</span>
               ) : (
                 <>
                   <button className="link" onClick={() => props.onFillGap(new Date(Math.max(it.s, props.backfillFrom)), new Date(it.t))}>
-                    补录
+                    {tr("补录")}
                   </button>
                   <GapDevice
                     start={Math.max(it.s, props.backfillFrom)}
@@ -81,11 +82,11 @@ export function Timeline(props: {
               <span className="tl-time">
                 {hm(it.e.start_utc)}–{hm(it.e.end_utc)}
               </span>
-              <span className="tl-title">{it.e.title || it.e.raw_text.slice(0, 30) || "（无描述）"}</span>
+              <span className="tl-title">{it.e.title || it.e.raw_text.slice(0, 30) || tr("（无描述）")}</span>
               <span className={`badge st-${it.e.status}`}>{STATUS_LABEL[it.e.status]}</span>
               {it.e.score && (
                 <span className={`score-pill g-${gradeOf(it.e.score.overall)}`}>
-                  {it.e.score.overall} {GRADE_LABEL[gradeOf(it.e.score.overall)]}
+                  {it.e.score.overall} {tr(GRADE_LABEL[gradeOf(it.e.score.overall)])}
                 </span>
               )}
             </li>

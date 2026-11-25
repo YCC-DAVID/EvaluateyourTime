@@ -9,8 +9,11 @@ import { DeviceRef, deviceTopItems } from "./DeviceRef.tsx";
 import { selectedOptions, toggleOption } from "../answers.ts";
 import { FeedbackPanel, type FeedbackPayload } from "./FeedbackPanel.tsx";
 import { STATUS_LABEL } from "./Timeline.tsx";
+import { tr } from "../i18n.ts";
 
-export type RecordTarget = { kind: "new"; start?: Date; end?: Date; fromDevice?: boolean } | { kind: "edit"; id: string };
+export type RecordTarget =
+  | { kind: "new"; start?: Date; end?: Date; fromDevice?: boolean; prefillText?: string; goalId?: string | null }
+  | { kind: "edit"; id: string };
 
 const FREE = "__free__";
 
@@ -74,7 +77,7 @@ export function RecordPanel(props: {
   // 新记录时从备选项里选中的目标
   const [linkedGoalId, setLinkedGoalId] = useState<string | null>(null);
   /** 追加一段文字到描述末尾，自动补逗号 */
-  const appendText = (t: string) => setText((prev) => (prev.trim() ? `${prev}${/[，。！？、,.!?\s]$/.test(prev) ? "" : "，"}${t}` : t));
+  const appendText = (t: string) => setText((prev) => (prev.trim() ? `${prev}${/[，。！？、,.!?\s]$/.test(prev) ? "" : tr("，")}${t}` : t));
   const [nowMs, setNowMs] = useState(Date.now());
   useEffect(() => {
     const t = setInterval(() => setNowMs(Date.now()), 20_000);
@@ -115,6 +118,8 @@ export function RecordPanel(props: {
     if (initialized) return;
     if (target.kind === "new") {
       const now = Date.now();
+      if (target.prefillText) setText(target.prefillText);
+      if (target.goalId) setLinkedGoalId(target.goalId);
       if (target.start) {
         // 补录：裁到允许范围内（最近 3 天、不超过现在）
         const s = Math.max(target.start.getTime(), backfillWindowStart(now));
@@ -205,7 +210,7 @@ export function RecordPanel(props: {
     let extra = n ? q.meta.minutes - base * n : 0;
     const rows: AllocDraft[] = [...byCat.entries()].map(([cat, labels]) => {
       const minutes = base + (extra-- > 0 ? 1 : 0);
-      return { category_id: cat, minutes, note: labels.join("、"), state: "confirmed", qid: q.id };
+      return { category_id: cat, minutes, note: labels.join(tr("、")), state: "confirmed", qid: q.id };
     });
     setAllocs((prev) => [...prev.filter((a) => a.qid !== q.id), ...rows]);
   }
@@ -225,10 +230,10 @@ export function RecordPanel(props: {
   // ---------- 动作 ----------
 
   const createAndMaybeAnalyze = (analyze: boolean) =>
-    act(analyze ? "正在保存并分析…" : "正在保存…", async () => {
+    act(analyze ? tr("正在保存并分析…") : tr("正在保存…"), async () => {
       // 快速记录在点击的这一刻重新取“现在”作为结束时间
       const r = quick ? quickRange(preset, Date.now(), lastEnd, customStart) : range;
-      if (!r) throw new Error("请选择开始时间");
+      if (!r) throw new Error(tr("请选择开始时间"));
       const e = await api.createEntry({ start: r.start.toISOString(), end: r.end.toISOString(), tz: TZ, text, goal_id: linkedGoalId });
       if (!analyze || !text.trim()) return synced(e);
       try {
@@ -242,11 +247,11 @@ export function RecordPanel(props: {
 
   /** 按电脑记录起草：新记录先建好，再让 AI 按电脑数据填描述、分配和问题 */
   const draftFromDevice = () =>
-    act("正在按电脑记录起草…", async () => {
+    act(tr("正在按电脑记录起草…"), async () => {
       let id = entry?.id;
       if (!id) {
         const r = quick ? quickRange(preset, Date.now(), lastEnd, customStart) : range;
-        if (!r) throw new Error("请选择时间段");
+        if (!r) throw new Error(tr("请选择时间段"));
         const e = await api.createEntry({ start: r.start.toISOString(), end: r.end.toISOString(), tz: TZ, text, goal_id: linkedGoalId });
         id = e.id;
       } else if (metaDirty) await api.updateEntry(id, { ...timePatch(), text });
@@ -269,20 +274,20 @@ export function RecordPanel(props: {
   }); // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveMeta = () =>
-    act("正在保存…", async () => {
+    act(tr("正在保存…"), async () => {
       const e = await api.updateEntry(entry!.id, { ...timePatch(), text });
       synced(e);
     });
 
   const analyze = () =>
-    act("AI 正在整理…", async () => {
+    act(tr("AI 正在整理…"), async () => {
       if (metaDirty) await api.updateEntry(entry!.id, { ...timePatch(), text });
       const r = await api.analyze(entry!.id);
       synced(r.entry);
     });
 
   const reviewAndScore = () =>
-    act("AI 正在评分…", async () => {
+    act(tr("AI 正在评分…"), async () => {
       if (metaDirty) await api.updateEntry(entry!.id, { ...timePatch(), text });
       await saveReview(entry!.id);
       const e = await api.score(entry!.id);
@@ -290,7 +295,7 @@ export function RecordPanel(props: {
     });
 
   const confirm = (p: { dims?: ScoreDims; change_kind?: string; change_note?: string; goal_progress?: number | null; goal_progress_reason?: string }) =>
-    act("正在保存…", async () => {
+    act(tr("正在保存…"), async () => {
       if (metaDirty) await api.updateEntry(entry!.id, { ...timePatch(), text });
       await saveReview(entry!.id);
       const e = await api.confirm(entry!.id, p);
@@ -299,15 +304,15 @@ export function RecordPanel(props: {
 
   // 保存对不确定项的补充和自我反馈；可选按补充重新评分
   const saveFeedback = (p: FeedbackPayload, rescore: boolean) =>
-    act(rescore ? "AI 正在按补充重新评分…" : "正在保存反馈…", async () => {
+    act(rescore ? tr("AI 正在按补充重新评分…") : tr("正在保存反馈…"), async () => {
       let e = await api.feedback(entry!.id, p);
       if (rescore) e = await api.score(entry!.id);
       synced(e);
     });
 
   const remove = () => {
-    if (!entry || !window.confirm("删除这条记录？")) return;
-    act("正在删除…", async () => {
+    if (!entry || !window.confirm(tr("删除这条记录？"))) return;
+    act(tr("正在删除…"), async () => {
       await api.deleteEntry(entry.id);
       props.onChanged(null);
     });
@@ -315,7 +320,7 @@ export function RecordPanel(props: {
 
   // ---------- 渲染 ----------
 
-  if (target.kind === "edit" && !entry) return <div className="card">加载中…</div>;
+  if (target.kind === "edit" && !entry) return <div className="card">{tr("加载中…")}</div>;
 
   const showReview = !!entry && (entry.status === "needs_confirmation" || entry.status === "confirmed" || manual || entry.allocations.length > 0);
   const hasScore = !!entry?.score;
@@ -324,11 +329,11 @@ export function RecordPanel(props: {
   return (
     <div className="card record">
       <div className="card-head">
-        <h3>{entry ? entry.title || "编辑记录" : "记录一段时间"}</h3>
+        <h3>{entry ? entry.title || tr("编辑记录") : tr("记录一段时间")}</h3>
         {entry && <span className={`badge st-${entry.status}`}>{STATUS_LABEL[entry.status]}</span>}
         {entry && (
           <button className="link" onClick={props.onNew}>
-            + 新记录
+            {tr("+ 新记录")}
           </button>
         )}
       </div>
@@ -338,14 +343,14 @@ export function RecordPanel(props: {
           <div className="chips">
             {sinceLastOk && (
               <button className={`chip${preset === "since_last" ? " on" : ""}`} onClick={() => setPreset("since_last")}>
-                从上次记录起（{hm(lastEnd!)}）
+                {tr("从上次记录起（")}{hm(lastEnd!)}{tr("）")}
               </button>
             )}
             <button className={`chip${preset === "30" ? " on" : ""}`} onClick={() => setPreset("30")}>
-              最近 30 分钟
+              {tr("最近 30 分钟")}
             </button>
             <button className={`chip${preset === "60" ? " on" : ""}`} onClick={() => setPreset("60")}>
-              最近 1 小时
+              {tr("最近 1 小时")}
             </button>
             <button
               className={`chip${preset === "custom" ? " on" : ""}`}
@@ -354,30 +359,30 @@ export function RecordPanel(props: {
                 setPreset("custom");
               }}
             >
-              自定义开始
+              {tr("自定义开始")}
             </button>
           </div>
           <div className="range-summary">
             {preset === "custom" ? (
               <label className="inline">
-                从 <input type="time" value={customStart} onChange={(e) => setCustomStart(e.target.value)} /> 到现在
+                {tr("从")} <input type="time" value={customStart} onChange={(e) => setCustomStart(e.target.value)} /> {tr("到现在")}
               </label>
             ) : start ? (
               <span>
-                {hm(start)} – 现在
+                {hm(start)} {tr("– 现在")}
               </span>
             ) : null}
             {total > 0 && <span className="muted">{fmtMinutes(total)}</span>}
             <span className="spacer" />
             <button className="link" onClick={enterBackfill}>
-              补录更早的时间…
+              {tr("补录更早的时间…")}
             </button>
           </div>
           {overlapMin > 0 && (
             <div className="warn-text">
-              与上一条记录重叠 {fmtMinutes(overlapMin)}
+              {tr("与上一条记录重叠")} {fmtMinutes(overlapMin)}
               <button className="link" onClick={() => setPreset("since_last")}>
-                改为从上次结束开始
+                {tr("改为从上次结束开始")}
               </button>
             </div>
           )}
@@ -386,7 +391,7 @@ export function RecordPanel(props: {
         <>
           <div className="range">
             <label>
-              开始
+              {tr("开始")}
               <input
                 type="datetime-local"
                 value={startStr}
@@ -397,7 +402,7 @@ export function RecordPanel(props: {
               />
             </label>
             <label>
-              结束
+              {tr("结束")}
               <input
                 type="datetime-local"
                 value={endStr}
@@ -410,12 +415,12 @@ export function RecordPanel(props: {
             <span className="muted">{total > 0 ? fmtMinutes(total) : ""}</span>
             {isNew && (
               <button className="link" onClick={() => setBackfill(false)}>
-                返回快速记录
+                {tr("返回快速记录")}
               </button>
             )}
           </div>
-          {isNew && <div className="hint">补录：只能选最近 {BACKFILL_DAYS} 天（今天、昨天、前天）。</div>}
-          {timeLocked && <div className="hint">超过 {BACKFILL_DAYS} 天的记录不能再改时间，文字和评分仍可修改。</div>}
+          {isNew && <div className="hint">{tr("补录：只能选最近")} {BACKFILL_DAYS} {tr("天（今天、昨天、前天）。")}</div>}
+          {timeLocked && <div className="hint">{tr("超过")} {BACKFILL_DAYS} {tr("天的记录不能再改时间，文字和评分仍可修改。")}</div>}
         </>
       )}
       {rangeError && <div className="error-text">{rangeError}</div>}
@@ -429,10 +434,10 @@ export function RecordPanel(props: {
           deviceChip={
             hasDevice && !rangeError && start
               ? {
-                  label: `💻 按电脑记录：${deviceTopItems(devSum!)
+                  label: tr("💻 按电脑记录：{0}", [deviceTopItems(devSum!)
                     .slice(0, 3)
                     .map((x) => `${x.label} ${x.minutes}`)
-                    .join(" · ")}`,
+                    .join(" · ")]),
                   disabled: !!busy,
                   onClick: draftFromDevice,
                 }
@@ -452,7 +457,7 @@ export function RecordPanel(props: {
         <textarea
           rows={4}
           autoFocus={isNew}
-          placeholder={`这段时间做了什么、推进了什么？例如：看论文，主要想理解方法，整理了一点笔记，中间刷了会儿手机。${isNew ? "\n⌘ + Enter 保存并分析" : ""}`}
+          placeholder={tr("这段时间做了什么、推进了什么？例如：看论文，主要想理解方法，整理了一点笔记，中间刷了会儿手机。{0}", [isNew ? tr("\n⌘ + Enter 保存并分析") : ""])}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
@@ -470,10 +475,10 @@ export function RecordPanel(props: {
       {!entry && (
         <div className="actions">
           <button className="primary" disabled={!!busy || !!rangeError || !start || !text.trim()} onClick={() => createAndMaybeAnalyze(true)}>
-            保存并分析
+            {tr("保存并分析")}
           </button>
           <button disabled={!!busy || !!rangeError || !start} onClick={() => createAndMaybeAnalyze(false)}>
-            仅保存
+            {tr("仅保存")}
           </button>
 
         </div>
@@ -483,15 +488,15 @@ export function RecordPanel(props: {
         <div className="actions">
           {metaDirty && (
             <button disabled={!!busy || !!rangeError} onClick={saveMeta}>
-              保存修改
+              {tr("保存修改")}
             </button>
           )}
           <button disabled={!!busy || !!rangeError || !text.trim()} onClick={analyze}>
-            {entry.status === "draft" || entry.status === "analysis_failed" ? "AI 分析" : "重新分析"}
+            {entry.status === "draft" || entry.status === "analysis_failed" ? tr("AI 分析") : tr("重新分析")}
           </button>
           {hasDevice && entry.status !== "confirmed" && (
-            <button disabled={!!busy || !!rangeError} onClick={draftFromDevice} title="按这段时间的电脑使用重新起草时间分配">
-              按电脑记录起草
+            <button disabled={!!busy || !!rangeError} onClick={draftFromDevice} title={tr("按这段时间的电脑使用重新起草时间分配")}>
+              {tr("按电脑记录起草")}
             </button>
           )}
           {!showReview && (
@@ -502,12 +507,12 @@ export function RecordPanel(props: {
                 if (allocs.length === 0) setAllocs([{ category_id: "cat_work", minutes: total, note: null, state: "confirmed" }]);
               }}
             >
-              不用 AI，手动填写
+              {tr("不用 AI，手动填写")}
             </button>
           )}
           <span className="spacer" />
           <button className="link danger" disabled={!!busy} onClick={remove}>
-            删除
+            {tr("删除")}
           </button>
         </div>
       )}
@@ -515,23 +520,23 @@ export function RecordPanel(props: {
       {busy && <div className="banner info">{busy}</div>}
       {error && <div className="banner error">{error}</div>}
       {entry?.analysis_error && !error && entry.status !== "confirmed" && (
-        <div className="banner error">上次 AI 调用失败：{entry.analysis_error}（原始记录已保存，可以重试或手动填写）</div>
+        <div className="banner error">{tr("上次 AI 调用失败：")}{entry.analysis_error}{tr("（原始记录已保存，可以重试或手动填写）")}</div>
       )}
 
       {entry && showReview && (
         <>
-          <h4>时间分配</h4>
+          <h4>{tr("时间分配")}</h4>
           <AllocationEditor total={total} categories={meta.categories} value={allocs} onChange={setAllocs} />
 
           {entry.questions.some((q) => q.source !== "uncertainty") && (
             <>
-              <h4>补充几个事实</h4>
+              <h4>{tr("补充几个事实")}</h4>
               {entry.questions.filter((q) => q.source !== "uncertainty").map((q) => (
                 <div className="question" key={q.id}>
                   <div className="q-text">
                     {q.question}
-                    {q.meta?.kind === "device" && <span className="muted small">（{fmtMinutes(q.meta.minutes)}，可多选，选完自动计入分配）</span>}
-                    {q.meta?.kind !== "device" && <span className="muted small">（可多选）</span>}
+                    {q.meta?.kind === "device" && <span className="muted small">{tr("（")}{fmtMinutes(q.meta.minutes)}{tr("，可多选，选完自动计入分配）")}</span>}
+                    {q.meta?.kind !== "device" && <span className="muted small">{tr("（可多选）")}</span>}
                   </div>
                   <div className="chips">
                     {q.options.map((o) => (
@@ -550,11 +555,11 @@ export function RecordPanel(props: {
                         setAllocs((prev) => prev.filter((a) => a.qid !== q.id));
                       }}
                     >
-                      其他…
+                      {tr("其他…")}
                     </button>
                   </div>
                   {answers[q.id] === FREE && (
-                    <input type="text" placeholder="自己写" value={freeText[q.id] ?? ""} onChange={(e) => setFreeText({ ...freeText, [q.id]: e.target.value })} />
+                    <input type="text" placeholder={tr("自己写")} value={freeText[q.id] ?? ""} onChange={(e) => setFreeText({ ...freeText, [q.id]: e.target.value })} />
                   )}
                 </div>
               ))}
@@ -563,9 +568,9 @@ export function RecordPanel(props: {
 
           <div className="goal-pick">
             <label>
-              关联目标
+              {tr("关联目标")}
               <select value={goalId ?? ""} onChange={(e) => setGoalId(e.target.value || null)}>
-                <option value="">（无）</option>
+                <option value="">{tr("（无）")}</option>
                 {activeGoals.map((g) => (
                   <option key={g.id} value={g.id}>
                     {g.is_primary ? "★ " : ""}
@@ -578,11 +583,11 @@ export function RecordPanel(props: {
 
           <div className="actions">
             <button className={hasScore ? "" : "primary"} disabled={!!busy || !canSubmitAlloc || !!rangeError} onClick={reviewAndScore}>
-              {hasScore ? "按当前事实重新评分" : "确认事实并让 AI 评分"}
+              {hasScore ? tr("按当前事实重新评分") : tr("确认事实并让 AI 评分")}
             </button>
             {!hasScore && !manual && (
               <button disabled={!!busy} onClick={() => setManual(true)}>
-                手动评分
+                {tr("手动评分")}
               </button>
             )}
           </div>

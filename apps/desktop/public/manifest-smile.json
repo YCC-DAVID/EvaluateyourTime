@@ -1,0 +1,13 @@
+{
+  "name": "时间记录",
+  "short_name": "时间记录",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f7f9",
+  "theme_color": "#3b6cf6",
+  "icons": [
+    { "src": "/m/icon-smile-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "/m/icon-smile-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

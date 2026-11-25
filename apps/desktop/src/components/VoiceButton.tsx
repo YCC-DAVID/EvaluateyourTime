@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api.ts";
+import { locale, tr } from "../i18n.ts";
 
 // 语音输入：配置了服务端转写时录音上传；否则使用浏览器自带的语音识别。
 // 转写结果只是追加到文本框里，用户可以先修改再分析。
@@ -43,12 +44,12 @@ export function VoiceButton({ serverAsr, onText }: { serverAsr: boolean; onText:
         mr.start();
         setState("listening");
       } catch {
-        setError("无法使用麦克风（检查浏览器权限）");
+        setError(tr("无法使用麦克风（检查浏览器权限）"));
       }
       return;
     }
     const rec = new SpeechRecognitionCtor();
-    rec.lang = "zh-CN";
+    rec.lang = locale;
     rec.continuous = true;
     rec.interimResults = true;
     rec.onresult = (ev: any) => {
@@ -63,7 +64,7 @@ export function VoiceButton({ serverAsr, onText }: { serverAsr: boolean; onText:
       setInterim(tmp);
     };
     rec.onerror = (ev: any) => {
-      setError(ev.error === "not-allowed" ? "麦克风权限被拒绝" : ev.error === "network" ? "语音识别需要联网" : `语音识别出错：${ev.error}`);
+      setError(ev.error === "not-allowed" ? tr("麦克风权限被拒绝") : ev.error === "network" ? tr("语音识别需要联网") : tr("语音识别出错：{0}", [ev.error]));
     };
     rec.onend = () => {
       setState("idle");
@@ -81,8 +82,8 @@ export function VoiceButton({ serverAsr, onText }: { serverAsr: boolean; onText:
 
   if (!supported)
     return (
-      <span className="muted small" title="当前浏览器不支持语音识别；可在 .env 配置 ASR 服务">
-        语音不可用
+      <span className="muted small" title={tr("当前浏览器不支持语音识别；可在 .env 配置 ASR 服务")}>
+        {tr("语音不可用")}
       </span>
     );
 
@@ -94,7 +95,7 @@ export function VoiceButton({ serverAsr, onText }: { serverAsr: boolean; onText:
         onClick={state === "listening" ? stop : start}
         disabled={state === "transcribing"}
       >
-        {state === "listening" ? "■ 停止" : state === "transcribing" ? "转写中…" : "🎙 语音"}
+        {state === "listening" ? tr("■ 停止") : state === "transcribing" ? tr("转写中…") : tr("🎙 语音")}
       </button>
       {interim && <span className="muted small">{interim}</span>}
       {error && <span className="error-text small">{error}</span>}

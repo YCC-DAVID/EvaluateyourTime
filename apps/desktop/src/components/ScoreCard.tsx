@@ -4,22 +4,23 @@ import type { ReactNode } from "react";
 import type { Goal, ScoreRevision } from "../api.ts";
 import { ProgressSlider } from "./ProgressSlider.tsx";
 import { LEVEL_COLOR } from "./ActivitySuggestions.tsx";
+import { locale, tr } from "../i18n.ts";
 
 const DIMS: { key: keyof ScoreDims; label: string; hint: string }[] = [
-  { key: "execution_quality", label: "执行质量", hint: "是否投入；是否得到相应的推进、锻炼或恢复" },
-  { key: "goal_contribution", label: "目标贡献", hint: "与当前目标的关系；休息娱乐不按产出评" },
-  { key: "arrangement_quality", label: "安排合理性", hint: "是否符合计划、超时或挤占必要活动" },
+  { key: "execution_quality", label: tr("执行质量"), hint: tr("是否投入；是否得到相应的推进、锻炼或恢复") },
+  { key: "goal_contribution", label: tr("目标贡献"), hint: tr("与当前目标的关系；休息娱乐不按产出评") },
+  { key: "arrangement_quality", label: tr("安排合理性"), hint: tr("是否符合计划、超时或挤占必要活动") },
 ];
 
 export const CHANGE_KINDS: [string, string][] = [
-  ["only_this", "仅修改本次"],
-  ["ai_misunderstood", "AI 理解错误"],
-  ["allocation_wrong", "分类或时长估计错误"],
-  ["rule_unfit", "当前评分规则不合适"],
-  ["apply_future", "希望以后类似情况采用同样标准"],
+  ["only_this", tr("仅修改本次")],
+  ["ai_misunderstood", tr("AI 理解错误")],
+  ["allocation_wrong", tr("分类或时长估计错误")],
+  ["rule_unfit", tr("当前评分规则不合适")],
+  ["apply_future", tr("希望以后类似情况采用同样标准")],
 ];
 
-const SOURCE_LABEL = { ai: "AI 评分", user: "用户修改", manual: "手动评分" } as const;
+const SOURCE_LABEL = { ai: tr("AI 评分"), user: tr("用户修改"), manual: tr("手动评分") } as const;
 
 export function ScoreCard(props: {
   score: ScoreRevision | null;
@@ -68,22 +69,22 @@ export function ScoreCard(props: {
       <div className="score-top">
         <div className={`overall g-${grade}`}>
           <span className="num">{overall}</span>
-          <span className="lbl">{GRADE_LABEL[grade]}</span>
+          <span className="lbl">{tr(GRADE_LABEL[grade])}</span>
         </div>
         <div className="score-meta">
           <div>
-            {props.score ? SOURCE_LABEL[props.score.source] : "手动评分"}
-            {props.score?.model ? ` · ${props.score.model}` : ""} · 规则 {props.rules.version}
+            {props.score ? SOURCE_LABEL[props.score.source] : tr("手动评分")}
+            {props.score?.model ? ` · ${props.score.model}` : ""} {tr("· 规则")} {props.rules.version}
           </div>
           <div className="muted small">
-            整体分由程序计算：执行 {w.execution_quality} · 目标 {w.goal_contribution} · 安排 {w.arrangement_quality}（按主导活动类型）
+            {tr("整体分由程序计算：执行")} {w.execution_quality} {tr("· 目标")} {w.goal_contribution} {tr("· 安排")} {w.arrangement_quality}{tr("（按主导活动类型）")}
           </div>
         </div>
       </div>
 
       {props.score?.reason && <p className="reason">{props.score.reason}</p>}
       {props.feedback}
-      {props.score?.suggestion && <p className="suggestion">建议：{props.score.suggestion}</p>}
+      {props.score?.suggestion && <p className="suggestion">{tr("建议：")}{props.score.suggestion}</p>}
 
       <div className="dims">
         {DIMS.map((d) => (
@@ -110,7 +111,7 @@ export function ScoreCard(props: {
 
       {changed && props.score && (
         <div className="change-reason">
-          <div className="small">为什么修改？</div>
+          <div className="small">{tr("为什么修改？")}</div>
           <div className="chips">
             {CHANGE_KINDS.map(([k, label]) => (
               <button key={k} className={`chip${changeKind === k ? " on" : ""}`} onClick={() => setChangeKind(k)}>
@@ -118,7 +119,7 @@ export function ScoreCard(props: {
               </button>
             ))}
           </div>
-          <input type="text" placeholder="补充说明（可选）" value={changeNote} onChange={(e) => setChangeNote(e.target.value)} />
+          <input type="text" placeholder={tr("补充说明（可选）")} value={changeNote} onChange={(e) => setChangeNote(e.target.value)} />
         </div>
       )}
 
@@ -126,10 +127,10 @@ export function ScoreCard(props: {
         <div className="goal-progress">
           <label className="check">
             <input type="checkbox" checked={applyProgress} onChange={(e) => setApplyProgress(e.target.checked)} />
-            更新目标进度
+            {tr("更新目标进度")}
           </label>
           <span className="gp-title">{props.goal.title}</span>
-          <span className="gp-from">原 {props.goal.progress}%</span>
+          <span className="gp-from">{tr("原")} {props.goal.progress}%</span>
           <ProgressSlider
             value={progressValue}
             base={props.goal.progress}
@@ -137,36 +138,36 @@ export function ScoreCard(props: {
             disabled={!applyProgress}
             onChange={setProgressValue}
           />
-          {suggested == null && props.score && <div className="gp-reason muted small">AI 没有判断出这段让目标有推进，可以手动调整。</div>}
+          {suggested == null && props.score && <div className="gp-reason muted small">{tr("AI 没有判断出这段让目标有推进，可以手动调整。")}</div>}
           {suggested != null && !suggestAhead && (
-            <div className="gp-reason muted small">AI 当时建议 {suggested}%，不高于当前进度，默认不更新。</div>
+            <div className="gp-reason muted small">{tr("AI 当时建议")} {suggested}{tr("%，不高于当前进度，默认不更新。")}</div>
           )}
           {applyProgress && (
             <label className="gp-note">
-              <span className="small">这次推进了什么{progressPending ? "（必填）" : ""}</span>
+              <span className="small">{tr("这次推进了什么")}{progressPending ? tr("（必填）") : ""}</span>
               <input
                 type="text"
                 value={progressNote}
-                placeholder="例如：跑完了模块 B 的消融，结果整理成表"
+                placeholder={tr("例如：跑完了模块 B 的消融，结果整理成表")}
                 onChange={(e) => setProgressNote(e.target.value)}
               />
               {props.score?.goal_progress_reason && progressNote === props.score.goal_progress_reason && (
-                <span className="muted small">已填入 AI 的理由，可以修改</span>
+                <span className="muted small">{tr("已填入 AI 的理由，可以修改")}</span>
               )}
             </label>
           )}
-          {progressValue >= 100 && applyProgress && <div className="gp-reason small ok-text">到 100% 了，可以去目标页把它标为完成。</div>}
+          {progressValue >= 100 && applyProgress && <div className="gp-reason small ok-text">{tr("到 100% 了，可以去目标页把它标为完成。")}</div>}
         </div>
       )}
 
       <div className="actions">
         {props.confirmed && !changed && !progressPending ? (
-          <span className="ok-text">已确认</span>
+          <span className="ok-text">{tr("已确认")}</span>
         ) : (
           <button
             className="primary"
             disabled={props.busy || progressNoteMissing}
-            title={progressNoteMissing ? "先写明这次推进了什么" : undefined}
+            title={progressNoteMissing ? tr("先写明这次推进了什么") : undefined}
             onClick={() =>
               props.onConfirm({
                 ...(changed || !props.score ? { dims, change_kind: props.score ? changeKind : undefined, change_note: changeNote || undefined } : {}),
@@ -175,12 +176,12 @@ export function ScoreCard(props: {
               })
             }
           >
-            {changed ? "保存修改并确认" : props.confirmed ? "更新目标进度" : "确认评分"}
+            {changed ? tr("保存修改并确认") : props.confirmed ? tr("更新目标进度") : tr("确认评分")}
           </button>
         )}
         {props.history.length > 1 && (
           <button className="link" onClick={() => setShowHistory(!showHistory)}>
-            {showHistory ? "收起" : `评分历史（${props.history.length}）`}
+            {showHistory ? tr("收起") : tr("评分历史（{0}）", [props.history.length])}
           </button>
         )}
       </div>
@@ -188,10 +189,10 @@ export function ScoreCard(props: {
         <ul className="history">
           {props.history.map((s) => (
             <li key={s.id}>
-              {new Date(s.created_at).toLocaleString("zh-CN", { hour12: false })} · {SOURCE_LABEL[s.source]} · {s.overall} 分（
-              {s.execution_quality}/{s.goal_contribution}/{s.arrangement_quality}）
+              {new Date(s.created_at).toLocaleString(locale, { hour12: false })} · {SOURCE_LABEL[s.source]} · {s.overall} {tr("分（")}
+              {s.execution_quality}/{s.goal_contribution}/{s.arrangement_quality}{tr("）")}
               {s.change_kind && ` · ${CHANGE_KINDS.find(([k]) => k === s.change_kind)?.[1]}`}
-              {s.change_note && `：${s.change_note}`}
+              {s.change_note && tr("：{0}", [s.change_note])}
             </li>
           ))}
         </ul>

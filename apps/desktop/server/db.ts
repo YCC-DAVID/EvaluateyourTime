@@ -105,6 +105,24 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   model TEXT, created_at TEXT NOT NULL, deleted INTEGER NOT NULL DEFAULT 0);
 `);
 addColumn("chat_messages", "quick_json", "TEXT");
+// 多个对话：每条消息属于一个对话；早期没有对话的消息归到“之前的对话”
+db.exec(`
+CREATE TABLE IF NOT EXISTS chat_threads (
+  id TEXT PRIMARY KEY, title TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted INTEGER NOT NULL DEFAULT 0);
+`);
+addColumn("chat_messages", "thread_id", "TEXT");
+// 手机离线时先存着、之后补发的消息：client_id 防重复，written_at 是写下的时间，reply_to 指向回复的那条用户消息
+addColumn("chat_messages", "client_id", "TEXT");
+addColumn("chat_messages", "written_at", "TEXT");
+addColumn("chat_messages", "reply_to", "TEXT");
+{
+  const orphan = db.prepare(`SELECT MIN(created_at) a, MAX(created_at) b FROM chat_messages WHERE thread_id IS NULL AND deleted=0`).get() as { a: string | null; b: string | null };
+  if (orphan.a) {
+    const id = `thr_legacy_${Date.now().toString(36)}`;
+    db.prepare(`INSERT INTO chat_threads (id,title,created_at,updated_at) VALUES (?,?,?,?)`).run(id, null, orphan.a, orphan.b);
+    db.prepare(`UPDATE chat_messages SET thread_id=? WHERE thread_id IS NULL AND deleted=0`).run(id);
+  }
+}
 // 引导问题的附加信息：例如按电脑记录起草时，“这块时间多少分钟、每个选项对应哪个分类”
 addColumn("review_questions", "meta_json", "TEXT");
 
@@ -126,6 +144,18 @@ db.exec(`UPDATE goal_progress_events SET deleted=1, updated_at='${new Date().toI
   );
   const t = nowIso();
   for (const c of BUILTIN_CATEGORIES) ins.run(c.id, c.name, c.kind, c.color, t, t, DEVICE_ID);
+  // 调色：休息和工作原来太接近（紫 vs 蓝），生活、运动也换成更好区分的颜色；只改还是旧默认色的内置分类
+  for (const [id, from, to] of [
+    ["cat_rest", "#8e7cc3", "#8e44ad"],
+    ["cat_life", "#5aa9c9", "#4cc3d9"],
+    ["cat_sport", "#22a06b", "#2b7a3d"],
+  ])
+    db.prepare(`UPDATE categories SET color=?,updated_at=? WHERE id=? AND color=?`).run(to, t, id, from);
+  // 热力图里蓝色表示休息：休息改用蓝色，工作改用紫色（只改还是默认色的）
+  if ((db.prepare(`SELECT color FROM categories WHERE id='cat_rest'`).get() as { color: string } | undefined)?.color === "#8e44ad") {
+    db.prepare(`UPDATE categories SET color='#4f7cff',updated_at=? WHERE id='cat_rest'`).run(t);
+    db.prepare(`UPDATE categories SET color='#8e44ad',updated_at=? WHERE id='cat_work' AND color='#4f7cff'`).run(t);
+  }
   db.prepare(`INSERT OR IGNORE INTO rulesets (id,version,config_json,effective_from,note) VALUES (?,?,?,?,?)`).run(
     "rules_v1", RULES_V1.version, JSON.stringify(RULES_V1), t, "初始默认规则",
   );

@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import express, { type Request, type Response, type NextFunction } from "express";
 import fs from "node:fs";
 import os from "node:os";
@@ -19,10 +20,16 @@ import {
 } from "../../../modules/scoring/index.ts";
 import { allocateEntry, analyzeEntry, chatTurn, draftFromDevice, guideEntry, scoreEntry, splitGoal, type EntryContext } from "../../../modules/ai/tasks.ts";
 import type { ChatAction } from "../../../modules/ai/schemas.ts";
-import { appLine, deviceSettings, deviceStatus, deviceSummary, summaryForAI } from "./device.ts";
+import { appLine, deviceSettings, deviceStatus, deviceSummary, siteOf, summaryForAI } from "./device.ts";
 import { setSetting as saveSetting } from "./db.ts";
 import { DEFAULT_PROFILE, PROFILE_PRESETS, profileLine, type Profile } from "../../../modules/profile.ts";
-import { AIError, loadAIConfig } from "../../../modules/ai/client.ts";
+import { AIError, listApiModels, loadAIConfig, testAI } from "../../../modules/ai/client.ts";
+import { mobileStatus, newPairingCode, revokeDevice, setMobileEnabled } from "./mobile.ts";
+import { aiCatalog, aiSettings, chatEffort, cliVersions, deleteKey, initAISettings, keyConfigured, saveAISettings, saveKey, usageSummary } from "./aisettings.ts";
+import { calendarEvents, ekSettings, helper, helperInstalled, saveEKSettings, startEKSync, syncCalendar, syncReminders, syncStatus } from "./eventkit.ts";
+
+// 设置页的 AI 选择（后端、模型、钥匙串里的 key）优先于 .env；每次调用的用量记到本地
+initAISettings();
 
 export const api = express.Router();
 api.use(express.json({ limit: "2mb" }));
@@ -146,6 +153,26 @@ function hydrate(e: Row) {
   return { ...e, allocations, questions, ai_score: aiScore, score: latest, score_history: scores };
 }
 
+// 界面语言（AI 回复也跟着用这个语言）
+api.put("/settings/language", (req, res) => {
+  const v = req.body?.language === "en" ? "en" : "zh";
+  setSetting("ui_language", v);
+  res.json({ language: v });
+});
+
+// 当前页面版本：网页（尤其是程序坞 / 主屏幕上的网页应用，没有刷新按钮）用它判断要不要提示刷新
+let buildId: string | null = null;
+api.get("/version", (_req, res) => {
+  if (buildId == null) {
+    try {
+      buildId = crypto.createHash("sha1").update(fs.readFileSync(path.resolve("dist", "index.html"))).update(fs.readFileSync(path.resolve("dist", "m", "index.html"))).digest("hex").slice(0, 12);
+    } catch {
+      buildId = "dev";
+    }
+  }
+  res.json({ build: buildId });
+});
+
 api.get("/meta", (_req, res) => {
   const cfg = loadAIConfig();
   res.json({
@@ -154,6 +181,7 @@ api.get("/meta", (_req, res) => {
     goals: goals(),
     work_budget_minutes: workBudget(),
     profile: profile(),
+    language: getSetting<"zh" | "en">("ui_language", "zh"),
     rules: RULES_V1,
     ai: { provider: cfg.provider, model: cfg.model, base_url: cfg.baseURL, key_configured: !!cfg.apiKey },
     asr: { server: !!process.env.ASR_BASE_URL },
@@ -888,7 +916,93 @@ api.get("/goals/:id/detail", (req, res) => {
   res.json({ goal: g, entries, events, start: { at: g.created_at, progress: startProgress } });
 });
 
-api.post("/goals", (req, res) => res.status(201).json(writeGoal(null, req.body)));
+api.post("/goals", (req, res) => {
+  const g = writeGoal(null, req.body);
+  remindersSoon();
+  res.status(201).json(g);
+});
+
+// ---------- 日历与提醒事项 ----------
+
+/** 给同步用：id 为空新建；否则只改给出的字段（writeGoal 需要完整对象） */
+function goalWriter(id: string | null, b: Record<string, unknown>) {
+  try {
+    if (!id) return writeGoal(null, b) as { id: string };
+    const g = one(`SELECT * FROM goals WHERE id=? AND deleted=0`, id);
+    if (!g) return undefined;
+    return writeGoal(id, { ...g, is_primary: !!g.is_primary, ...b }) as { id: string };
+  } catch (e) {
+    console.error("同步写目标失败：", (e as Error).message);
+    return undefined;
+  }
+}
+startEKSync(goalWriter);
+
+/** 应用里改了目标后，过几秒同步一次提醒事项 */
+let remTimer: NodeJS.Timeout | null = null;
+function remindersSoon() {
+  if (!ekSettings().reminderLists.length || !helperInstalled()) return;
+  if (remTimer) clearTimeout(remTimer);
+  remTimer = setTimeout(() => syncReminders(goalWriter), 4000);
+}
+
+api.get(
+  "/ek/status",
+  wrap(async (_req, res) => {
+    let permissions: { calendar: string; reminders: string } | null = null;
+    if (helperInstalled()) permissions = await helper("status").catch(() => null);
+    res.json({ ...syncStatus(), permissions, settings: ekSettings() });
+  }),
+);
+
+// 第一次会弹出系统授权窗口（日历、提醒事项各一次），由用户决定是否允许
+api.post(
+  "/ek/request",
+  wrap(async (_req, res) => res.json(await helper("request"))),
+);
+
+api.get(
+  "/ek/sources",
+  wrap(async (_req, res) => {
+    const [cals, lists] = await Promise.all([
+      helper<{ calendars: unknown[] }>("calendars").catch((e) => ({ calendars: [], error: (e as Error).message })),
+      helper<{ lists: unknown[] }>("reminder-lists").catch((e) => ({ lists: [], error: (e as Error).message })),
+    ]);
+    res.json({ calendars: cals.calendars, lists: lists.lists, errors: [(cals as any).error, (lists as any).error].filter(Boolean) });
+  }),
+);
+
+api.put("/ek/settings", (req, res) => {
+  saveEKSettings(req.body ?? {});
+  syncCalendar();
+  syncReminders(goalWriter);
+  res.json(ekSettings());
+});
+
+api.post(
+  "/ek/sync",
+  wrap(async (_req, res) => {
+    await Promise.all([syncCalendar(), syncReminders(goalWriter)]);
+    res.json(syncStatus());
+  }),
+);
+
+api.get("/calendar/events", (req, res) => {
+  const from = String(req.query.from ?? "");
+  const to = String(req.query.to ?? "");
+  if (!from || !to) throw new HttpError(400, "需要 from 和 to");
+  res.json(calendarEvents(from, to));
+});
+
+/** 把某类日程（标题包含 match）关联到目标；goalId 为空表示删除这条规则 */
+api.put("/calendar/rule", (req, res) => {
+  const match = String(req.body?.match ?? "").trim();
+  if (!match) throw new HttpError(400, "缺少关键词");
+  const rules = ekSettings().eventRules.filter((r) => r.match !== match);
+  if (req.body?.goalId) rules.push({ match, goalId: String(req.body.goalId) });
+  saveEKSettings({ eventRules: rules });
+  res.json(ekSettings().eventRules);
+});
 
 // ---------- 拆分目标 ----------
 
@@ -992,6 +1106,10 @@ api.post("/goals/:id/rollup", (req, res) => {
   });
   res.json(goals().find((x) => x.id === id));
 });
+api.patch("/goals/:id", (req, res, next) => {
+  res.on("finish", remindersSoon);
+  next();
+});
 api.patch("/goals/:id", (req, res) => {
   const g = one(`SELECT * FROM goals WHERE id=? AND deleted=0`, String(req.params.id));
   if (!g) throw new HttpError(404, "目标不存在");
@@ -1001,6 +1119,63 @@ api.delete("/goals/:id", (req, res) => {
   run(`UPDATE goals SET deleted=1,is_primary=0,updated_at=?,version=version+1 WHERE id=?`, nowIso(), String(req.params.id));
   res.json({ ok: true });
 });
+
+// ---------- AI 服务设置与用量 ----------
+
+api.get(
+  "/ai/settings",
+  wrap(async (_req, res) => {
+    const cfg = loadAIConfig();
+    res.json({
+      settings: aiSettings(),
+      effective: { provider: cfg.provider, model: cfg.model, baseURL: cfg.baseURL, chatEffort: chatEffort() },
+      keyConfigured: keyConfigured(),
+      keyFromEnv: !keyConfigured() && !!process.env.ANTHROPIC_API_KEY,
+      cli: await cliVersions(),
+    });
+  }),
+);
+
+api.get("/ai/catalog", (_req, res) => {
+  res.json(aiCatalog());
+});
+
+api.put("/ai/settings", (req, res) => {
+  const b = req.body ?? {};
+  saveAISettings(b);
+  // API key：只在填了新值时写入钥匙串；clearKey 删除；永远不回传 key 本身
+  if (typeof b.apiKey === "string" && b.apiKey.trim()) {
+    const k = b.apiKey.trim();
+    if (!/^sk-ant-/.test(k)) throw new HttpError(400, "这看起来不像 Claude API key（应以 sk-ant- 开头）");
+    saveKey(k);
+  }
+  if (b.clearKey === true) deleteKey();
+  res.json({ settings: aiSettings(), keyConfigured: keyConfigured() });
+});
+
+api.post(
+  "/ai/test",
+  wrap(async (_req, res) => {
+    try {
+      res.json(await testAI());
+    } catch (err) {
+      res.status(502).json({ error: err instanceof AIError ? err.message : (err as Error).message });
+    }
+  }),
+);
+
+api.get(
+  "/ai/models",
+  wrap(async (_req, res) => {
+    try {
+      res.json({ models: await listApiModels() });
+    } catch (err) {
+      res.json({ models: [], error: (err as Error).message });
+    }
+  }),
+);
+
+api.get("/ai/usage", (_req, res) => res.json(usageSummary()));
 
 // ---------- 设置 ----------
 
@@ -1148,7 +1323,7 @@ api.get("/device/apps", (_req, res) => {
     `SELECT detail, COUNT(*) AS n FROM device_spans WHERE afk=0 AND end_utc > ? AND detail IS NOT NULL AND detail NOT LIKE '（%'
      AND app IN ('Google Chrome','Microsoft Edge','Brave Browser','Arc','Safari') GROUP BY detail ORDER BY n DESC LIMIT 40`,
     since,
-  ).map((r) => r.detail);
+  ).map((r) => siteOf(r.detail as string));
   // 已安装的应用（“只记录我选的应用”时从这里挑）
   const installed: string[] = [];
   for (const dir of ["/Applications", path.join(os.homedir(), "Applications")]) {
@@ -1158,7 +1333,7 @@ api.get("/device/apps", (_req, res) => {
       /* 目录不存在 */
     }
   }
-  res.json({ apps, sites, installed: [...new Set(installed)].sort((a, b) => a.localeCompare(b)) });
+  res.json({ apps, sites: [...new Set(sites)], installed: [...new Set(installed)].sort((a, b) => a.localeCompare(b)) });
 });
 
 api.put("/device/settings", (req, res) => {
@@ -1236,7 +1411,15 @@ function chatContext() {
   };
 }
 
-type StoredAction = ChatAction & { status: "pending" | "applied" | "dismissed" | "failed" | "invalid"; error?: string; start_iso?: string; end_iso?: string; result?: unknown };
+type StoredAction = ChatAction & {
+  status: "pending" | "applied" | "dismissed" | "failed" | "invalid";
+  error?: string;
+  start_iso?: string;
+  end_iso?: string;
+  result?: unknown;
+  /** 和已有记录重叠的部分（应用前提示用户） */
+  overlaps?: { entry_id: string; title: string; minutes: number }[];
+};
 
 /** 检查 AI 提出的操作：ID 必须存在、时间合法、分类有效；不合格的标成 invalid 并写明原因 */
 function checkAction(a: ChatAction, ctx: ReturnType<typeof chatContext>): StoredAction {
@@ -1259,6 +1442,19 @@ function checkAction(a: ChatAction, ctx: ReturnType<typeof chatContext>): Stored
       const total = Math.round((e.getTime() - s.getTime()) / 60000);
       const sum = out.allocations.reduce((x, y) => x + y.minutes, 0);
       if (sum > total) return bad(`分配合计 ${sum} 分钟超过时段 ${total} 分钟`);
+      const ov = all(
+        `SELECT id,title,raw_text,start_utc,end_utc FROM entries WHERE deleted=0 AND id<>? AND start_utc < ? AND end_utc > ?`,
+        a.entry_id ?? "",
+        out.end_iso,
+        out.start_iso,
+      )
+        .map((r) => ({
+          entry_id: String(r.id),
+          title: String(r.title || String(r.raw_text).slice(0, 16) || "未命名记录"),
+          minutes: Math.round((Math.min(e.getTime(), Date.parse(r.end_utc)) - Math.max(s.getTime(), Date.parse(r.start_utc))) / 60000),
+        }))
+        .filter((x) => x.minutes > 0);
+      if (ov.length) out.overlaps = ov;
     }
   }
   if (a.type === "update_goal_progress") {
@@ -1285,10 +1481,66 @@ const chatRow = (r: Row) => ({
   quick_replies: r.quick_json ? JSON.parse(r.quick_json) : [],
   model: r.model,
   created_at: r.created_at,
+  written_at: r.written_at ?? null,
 });
 
-api.get("/chat", (_req, res) => {
-  res.json(all(`SELECT * FROM chat_messages WHERE deleted=0 ORDER BY created_at`).map(chatRow));
+/** 正在处理的手机补发消息（防止重试时同时处理两遍） */
+const inFlight = new Set<string>();
+
+// ---- 对话列表（历史） ----
+/** 对话标题：用户起的名字，否则取第一句话 */
+function threadTitle(t: Row) {
+  if (t.title) return String(t.title);
+  const first = one(`SELECT content FROM chat_messages WHERE thread_id=? AND deleted=0 AND role='user' ORDER BY created_at LIMIT 1`, t.id);
+  const s = String(first?.content ?? "").replace(/\s+/g, " ").trim();
+  return s ? (s.length > 24 ? `${s.slice(0, 24)}…` : s) : "新对话";
+}
+const threadRow = (t: Row) => ({
+  id: t.id,
+  title: threadTitle(t),
+  custom_title: !!t.title,
+  created_at: t.created_at,
+  updated_at: t.updated_at,
+  count: Number(one(`SELECT COUNT(*) n FROM chat_messages WHERE thread_id=? AND deleted=0 AND role<>'event'`, t.id)?.n ?? 0),
+});
+function getThread(id: unknown) {
+  const t = one(`SELECT * FROM chat_threads WHERE id=? AND deleted=0`, String(id ?? ""));
+  if (!t) throw new HttpError(404, "对话不存在");
+  return t;
+}
+function newThread() {
+  const t = nowIso();
+  const id = newId("thr");
+  run(`INSERT INTO chat_threads (id,title,created_at,updated_at) VALUES (?,?,?,?)`, id, null, t, t);
+  return one(`SELECT * FROM chat_threads WHERE id=?`, id)!;
+}
+
+api.get("/chat/threads", (_req, res) => {
+  res.json(all(`SELECT * FROM chat_threads WHERE deleted=0 ORDER BY updated_at DESC LIMIT 200`).map(threadRow));
+});
+api.post("/chat/threads", (_req, res) => {
+  // 已经有一个空的新对话就直接用它，不重复创建
+  const empty = one(
+    `SELECT * FROM chat_threads t WHERE deleted=0 AND title IS NULL AND NOT EXISTS (SELECT 1 FROM chat_messages m WHERE m.thread_id=t.id AND m.deleted=0) ORDER BY created_at DESC LIMIT 1`,
+  );
+  res.json(threadRow(empty ?? newThread()));
+});
+api.patch("/chat/threads/:id", (req, res) => {
+  const t = getThread(req.params.id);
+  const title = String(req.body?.title ?? "").trim().slice(0, 40);
+  run(`UPDATE chat_threads SET title=? WHERE id=?`, title || null, t.id);
+  res.json(threadRow(one(`SELECT * FROM chat_threads WHERE id=?`, t.id)!));
+});
+api.delete("/chat/threads/:id", (req, res) => {
+  const t = getThread(req.params.id);
+  run(`UPDATE chat_threads SET deleted=1 WHERE id=?`, t.id);
+  run(`UPDATE chat_messages SET deleted=1 WHERE thread_id=?`, t.id);
+  res.json({ ok: true });
+});
+
+api.get("/chat", (req, res) => {
+  const t = getThread(req.query.thread);
+  res.json(all(`SELECT * FROM chat_messages WHERE deleted=0 AND thread_id=? ORDER BY created_at`, t.id).map(chatRow));
 });
 
 api.post(
@@ -1296,13 +1548,31 @@ api.post(
   wrap(async (req, res) => {
     const message = String(req.body?.message ?? "").trim().slice(0, 4000);
     if (!message) throw new HttpError(400, "说点什么吧");
+    const thread = req.body?.thread ? getThread(req.body.thread) : newThread();
     // event：应用里发生的事（用户点了“应用”），不是用户说的话
     const event = req.body?.event === true;
+    // 手机离线时存下、之后补发的消息：client_id 用来防止重复（网络断了重试时不会再发一遍）
+    const clientId = typeof req.body?.client_id === "string" ? req.body.client_id.slice(0, 64) : null;
+    const writtenMs = Date.parse(String(req.body?.written_at ?? ""));
+    const writtenAt = Number.isFinite(writtenMs) && writtenMs <= Date.now() + 60_000 ? new Date(writtenMs).toISOString() : null;
     const t = nowIso();
-    const userId = newId("msg");
-    run(`INSERT INTO chat_messages (id,role,content,created_at) VALUES (?,?,?,?)`, userId, event ? "event" : "user", message, t);
-    // 最近 20 条对话；助手消息附上它提出的操作和处理结果
-    const history = all(`SELECT * FROM chat_messages WHERE deleted=0 AND id<>? ORDER BY created_at DESC LIMIT 20`, userId)
+    let userId = newId("msg");
+    const prev = clientId ? one(`SELECT * FROM chat_messages WHERE client_id=? AND deleted=0`, clientId) : undefined;
+    if (prev) {
+      const reply = one(`SELECT * FROM chat_messages WHERE reply_to=? AND deleted=0`, prev.id);
+      if (reply) return void res.json({ ...chatRow(reply), thread_id: prev.thread_id });
+      if (inFlight.has(clientId!)) throw new HttpError(409, "这条消息正在处理");
+      userId = prev.id; // 上次 AI 没回成功：沿用同一条消息重试
+    } else {
+      run(
+        `INSERT INTO chat_messages (id,role,content,created_at,thread_id,client_id,written_at) VALUES (?,?,?,?,?,?,?)`,
+        userId, event ? "event" : "user", message, t, thread.id, clientId, writtenAt,
+      );
+      run(`UPDATE chat_threads SET updated_at=? WHERE id=?`, t, thread.id);
+    }
+    if (clientId) inFlight.add(clientId);
+    // 本对话最近 20 条；助手消息附上它提出的操作和处理结果
+    const history = all(`SELECT * FROM chat_messages WHERE deleted=0 AND thread_id=? AND id<>? ORDER BY created_at DESC LIMIT 20`, thread.id, userId)
       .reverse()
       .map(chatRow)
       .map((m) => {
@@ -1317,21 +1587,47 @@ api.post(
     const ctx = chatContext();
     const now = new Date();
     try {
-      const { output, model } = await chatTurn({ now: `${localStamp(now)} ${WEEK[now.getDay()]}`, context: ctx.text + (await recentDeviceText()), history, message, event });
+      // 晚发的消息：告诉 AI 这是什么时候写的，“刚才”“现在”以写的时间为准
+      const late = writtenAt && now.getTime() - Date.parse(writtenAt) > 2 * 60_000;
+      const w = late ? new Date(writtenAt!) : null;
+      const sentMsg = w
+        ? `（这条消息写于 ${localStamp(w)} ${WEEK[w.getDay()]}，当时连不上服务，现在才发出；里面的“刚才”“现在”“今天”等都以写的时间为准）\n${message}`
+        : message;
+      const { output, model } = await chatTurn({ now: `${localStamp(now)} ${WEEK[now.getDay()]}`, context: ctx.text + (await recentDeviceText()), history, message: sentMsg, event }, chatEffort());
       const actions = output.actions.slice(0, 8).map((a) => checkAction(a, ctx));
       const quick = output.quick_replies.map((q) => String(q).trim().slice(0, 30)).filter(Boolean).slice(0, 4);
       const id = newId("msg");
+      const at = nowIso();
       run(
-        `INSERT INTO chat_messages (id,role,content,actions_json,quick_json,model,created_at) VALUES (?,?,?,?,?,?,?)`,
-        id, "assistant", output.reply, JSON.stringify(actions), JSON.stringify(quick), model, nowIso(),
+        `INSERT INTO chat_messages (id,role,content,actions_json,quick_json,model,created_at,thread_id,reply_to) VALUES (?,?,?,?,?,?,?,?,?)`,
+        id, "assistant", output.reply, JSON.stringify(actions), JSON.stringify(quick), model, at, thread.id, userId,
       );
-      res.json(chatRow(one(`SELECT * FROM chat_messages WHERE id=?`, id)!));
+      run(`UPDATE chat_threads SET updated_at=? WHERE id=?`, at, thread.id);
+      res.json({ ...chatRow(one(`SELECT * FROM chat_messages WHERE id=?`, id)!), thread_id: thread.id });
     } catch (err) {
       const msg = err instanceof AIError ? err.message : `对话失败：${(err as Error).message}`;
-      res.status(502).json({ error: msg });
+      res.status(502).json({ error: msg, thread_id: thread.id });
+    } finally {
+      if (clientId) inFlight.delete(clientId);
     }
   }),
 );
+
+// ---------- 手机访问（只在本机设置页使用；手机那边的监听会拒绝这些接口） ----------
+
+api.get("/mobile/status", (_req, res) => res.json(mobileStatus()));
+api.put("/mobile/enabled", (req, res) => {
+  setMobileEnabled(req.body?.enabled === true);
+  res.json(mobileStatus());
+});
+api.post("/mobile/pairing", (_req, res) => {
+  newPairingCode();
+  res.json(mobileStatus());
+});
+api.delete("/mobile/devices/:id", (req, res) => {
+  revokeDevice(String(req.params.id));
+  res.json(mobileStatus());
+});
 
 // 用户处理了某个操作（应用/忽略），记录结果
 api.patch("/chat/:id/actions/:idx", (req, res) => {
@@ -1347,10 +1643,6 @@ api.patch("/chat/:id/actions/:idx", (req, res) => {
   res.json(chatRow(one(`SELECT * FROM chat_messages WHERE id=?`, m.id)!));
 });
 
-api.delete("/chat", (_req, res) => {
-  run(`UPDATE chat_messages SET deleted=1 WHERE deleted=0`);
-  res.json({ ok: true });
-});
 
 // ---------- 错误处理 ----------
 

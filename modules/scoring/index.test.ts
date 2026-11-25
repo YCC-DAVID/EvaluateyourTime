@@ -9,6 +9,7 @@ import {
   computeDayStats,
   computeOverall,
   durationMinutes,
+  resolveOverlaps,
   sanitizeAllocations,
   type DayEntry,
 } from "./index.ts";
@@ -102,4 +103,38 @@ test("热力图：96 格，覆盖格用整段平均分，未记录为 null", () 
   assert.equal(cells[56].coveredMinutes, 15);
   assert.equal(cells[57].coveredMinutes, 5);
   assert.equal(cells[58].score, null);
+});
+
+test("时间重叠：后建的记录优先，统计不重复计数", () => {
+  const cats = [
+    { id: "w", name: "工作", kind: "work", color: "#000", builtin: true },
+    { id: "r", name: "休息", kind: "rest", color: "#000", builtin: true },
+  ] as any;
+  const d0 = Date.parse("2026-11-25T05:00:00Z");
+  const d1 = d0 + 24 * 3600_000;
+  const old = {
+    id: "old", start: "2026-11-25T05:37:00Z", end: "2026-11-25T12:38:00Z", overall: 60, confirmed: true, goal_id: null,
+    allocations: [{ category_id: "r", minutes: 392, state: "confirmed" }, { category_id: "w", minutes: 27, state: "confirmed" }],
+    createdAt: "2026-11-25T12:38:00Z",
+  } as any;
+  const sleep = {
+    id: "sleep", start: "2026-11-25T07:00:00Z", end: "2026-11-25T12:30:00Z", overall: 90, confirmed: true, goal_id: null,
+    allocations: [{ category_id: "r", minutes: 330, state: "confirmed" }],
+    createdAt: "2026-11-25T17:17:00Z",
+  } as any;
+  const st = computeDayStats([old, sleep], cats, d0, d1, d1, 360, null);
+  // 墙钟时间：05:37–12:38 = 421 分钟，不是 421 + 330
+  assert.equal(st.recordedMinutes, 421);
+  assert.ok(st.minutesByKind.rest + st.minutesByKind.work <= 421);
+  // 睡眠覆盖的部分从原记录的“休息”里扣，原记录的 27 分钟工作保留
+  assert.equal(st.minutesByKind.work, 27);
+  assert.equal(st.minutesByKind.rest, 392);
+  const r = resolveOverlaps([old, sleep]);
+  assert.equal(r[0].overlappedMinutes, 330);
+  assert.equal(r[1].overlappedMinutes, 0);
+  // 被睡眠覆盖的格子按睡眠的分数着色
+  const cells = buildHeatmap([old, sleep], d0, d1);
+  const at = cells.find((c) => c.start === Date.parse("2026-11-25T09:00:00Z"))!;
+  assert.equal(at.score, 90);
+  assert.deepEqual(at.entryIds, ["sleep"]);
 });
